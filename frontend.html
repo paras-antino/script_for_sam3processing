@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SAM3 Video Processor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0a; color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 40px 24px;
+  }
+
+  h1 { color: #00c864; font-size: 1.2rem; letter-spacing: 3px; margin-bottom: 6px; }
+  .subtitle { color: #333; font-size: 0.72rem; margin-bottom: 40px; }
+
+  .card {
+    background: #111; border: 1px solid #1e1e1e;
+    border-radius: 10px; padding: 28px;
+    width: 100%; max-width: 560px;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+
+  .section-title {
+    font-size: 0.62rem; letter-spacing: 2px; color: #444;
+    text-transform: uppercase; padding-bottom: 10px;
+    border-bottom: 1px solid #1a1a1a;
+  }
+
+  label {
+    display: block; font-size: 0.68rem; color: #555;
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;
+  }
+
+  /* Drop zone */
+  .dropzone {
+    border: 2px dashed #222; border-radius: 8px;
+    padding: 36px 20px; text-align: center;
+    cursor: pointer; transition: all 0.2s; position: relative;
+  }
+  .dropzone:hover, .dropzone.dragover { border-color: #00c864; background: #0a1a0a; }
+  .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+  .dropzone svg { width: 36px; height: 36px; color: #333; margin-bottom: 10px; }
+  .dropzone p   { font-size: 0.78rem; color: #444; }
+  .dropzone .file-name { color: #00c864; font-size: 0.82rem; margin-top: 8px; }
+
+  /* Tags */
+  .tags-wrapper {
+    background: #0d0d0d; border: 1px solid #2a2a2a; border-radius: 4px;
+    padding: 7px; display: flex; flex-wrap: wrap; gap: 5px;
+    min-height: 44px; cursor: text; transition: border-color 0.2s;
+  }
+  .tags-wrapper:focus-within { border-color: #00c864; }
+  .tag {
+    background: #0a1a0a; border: 1px solid #00c864; color: #00c864;
+    border-radius: 3px; padding: 2px 8px; font-size: 0.72rem;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .tag button { background: none; border: none; color: #00c864; cursor: pointer; font-size: 0.8rem; opacity: 0.6; }
+  .tag button:hover { opacity: 1; }
+  #tag-input {
+    background: none; border: none; outline: none; color: #e0e0e0;
+    font-family: inherit; font-size: 0.82rem; padding: 2px 4px;
+    flex: 1; min-width: 80px;
+  }
+  .hint { font-size: 0.65rem; color: #2a2a2a; margin-top: 4px; }
+
+  /* Slider */
+  .slider-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .slider-val { color: #00c864; font-size: 0.82rem; }
+  input[type="range"] { width: 100%; height: 4px; accent-color: #00c864; cursor: pointer; }
+
+  /* Button */
+  .btn {
+    width: 100%; padding: 13px; border: none; border-radius: 6px;
+    font-family: inherit; font-size: 0.88rem; font-weight: bold;
+    letter-spacing: 1px; cursor: pointer; transition: opacity 0.2s, transform 0.1s;
+    background: #00c864; color: #000;
+  }
+  .btn:hover { opacity: 0.9; }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* Progress section */
+  #progress-section { display: none; flex-direction: column; gap: 14px; }
+
+  .progress-header { display: flex; justify-content: space-between; align-items: center; }
+  .progress-label  { font-size: 0.72rem; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+  .progress-pct    { font-size: 1rem; font-weight: bold; color: #00c864; }
+
+  .progress-track {
+    height: 6px; background: #1a1a1a; border-radius: 4px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; background: #00c864; border-radius: 4px;
+    transition: width 0.4s ease; width: 0%;
+  }
+
+  .progress-meta {
+    display: flex; gap: 16px; flex-wrap: wrap;
+  }
+  .pmeta {
+    font-size: 0.68rem; color: #444;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .pmeta span { color: #aaa; font-size: 0.82rem; }
+
+  /* Status states */
+  .status-row { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; flex-shrink: 0; }
+  .status-dot.processing { background: #00c864; animation: pulse 1.2s infinite; }
+  .status-dot.done       { background: #00c864; }
+  .status-dot.failed     { background: #e05555; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  #error-box {
+    font-size: 0.75rem; color: #e05555;
+    background: #1a0a0a; border: 1px solid #3a1a1a;
+    border-radius: 4px; padding: 10px; display: none;
+  }
+
+  /* Download button */
+  #download-btn {
+    display: none; width: 100%; padding: 13px;
+    background: #1a1a2e; border: 1px solid #6495ed; color: #6495ed;
+    border-radius: 6px; font-family: inherit; font-size: 0.88rem;
+    font-weight: bold; letter-spacing: 1px; cursor: pointer;
+    transition: background 0.2s;
+  }
+  #download-btn:hover { background: #1e1e3a; }
+
+  /* Reset link */
+  #reset-btn {
+    text-align: center; font-size: 0.72rem; color: #333;
+    cursor: pointer; display: none;
+  }
+  #reset-btn:hover { color: #888; }
+</style>
+</head>
+<body>
+
+<h1>⬡ SAM3 VIDEO PROCESSOR</h1>
+<p class="subtitle">Upload · Detect · Download</p>
+
+<div class="card">
+  <div class="section-title">Upload & Configure</div>
+
+  <!-- Drop zone -->
+  <div>
+    <label>Video File</label>
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="file-input" accept=".mp4,.avi,.mov,.mkv,.webm"
+             onchange="onFileSelect(this)"/>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
+        <polyline points="16 12 12 8 8 12"/>
+        <line x1="12" y1="8" x2="12" y2="20"/>
+      </svg>
+      <p>Drop video here or click to browse</p>
+      <p>MP4 · AVI · MOV · MKV · WEBM — max 500MB</p>
+      <div class="file-name" id="file-name"></div>
+    </div>
+  </div>
+
+  <!-- Labels -->
+  <div>
+    <label>Detection Targets</label>
+    <div class="tags-wrapper" id="tags-wrapper"
+         onclick="document.getElementById('tag-input').focus()">
+      <input id="tag-input" type="text" placeholder="Type label, press Enter"/>
+    </div>
+    <p class="hint">e.g. person · car · dog · laptop · backpack</p>
+  </div>
+
+  <!-- Confidence -->
+  <div>
+    <div class="slider-row">
+      <label style="margin:0">Confidence Threshold</label>
+      <span class="slider-val" id="conf-val">0.30</span>
+    </div>
+    <input type="range" id="confidence" min="0.10" max="0.90" step="0.05" value="0.30"
+           oninput="document.getElementById('conf-val').textContent=parseFloat(this.value).toFixed(2)"/>
+  </div>
+
+  <!-- SAM3 every N -->
+  <div>
+    <div class="slider-row">
+      <label style="margin:0">SAM3 Every N Frames <span style="color:#333;font-size:.65rem">(higher = faster)</span></label>
+      <span class="slider-val" id="everyn-val">5</span>
+    </div>
+    <input type="range" id="every-n" min="1" max="15" step="1" value="5"
+           oninput="document.getElementById('everyn-val').textContent=this.value"/>
+  </div>
+
+  <!-- Error -->
+  <div id="error-box"></div>
+
+  <!-- Submit -->
+  <button class="btn" id="submit-btn" onclick="submitJob()">⚡ PROCESS VIDEO</button>
+
+  <!-- Progress -->
+  <div id="progress-section">
+    <div class="section-title">Processing</div>
+
+    <div class="status-row">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Queued...</span>
+    </div>
+
+    <div>
+      <div class="progress-header">
+        <span class="progress-label">Progress</span>
+        <span class="progress-pct" id="progress-pct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <div class="progress-meta">
+      <div class="pmeta">Frames<span id="m-frames">—</span></div>
+      <div class="pmeta">Resolution<span id="m-res">—</span></div>
+      <div class="pmeta">Proc FPS<span id="m-pfps">—</span></div>
+      <div class="pmeta">ETA<span id="m-eta">—</span></div>
+    </div>
+  </div>
+
+  <!-- Download -->
+  <button id="download-btn" onclick="downloadResult()">⬇ DOWNLOAD PROCESSED VIDEO</button>
+
+  <!-- Reset -->
+  <div id="reset-btn" onclick="resetUI()">↺ Process another video</div>
+
+</div>
+
+<script>
+  // ── Drag & drop ────────────────────────────────────────────────────────────
+  const dropzone = document.getElementById('dropzone');
+  dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f) setFile(f);
+  });
+
+  let selectedFile = null;
+  function onFileSelect(input) {
+    if (input.files[0]) setFile(input.files[0]);
+  }
+  function setFile(f) {
+    selectedFile = f;
+    document.getElementById('file-name').textContent = `✓ ${f.name}  (${(f.size/1e6).toFixed(1)} MB)`;
+  }
+
+  // ── Tags ───────────────────────────────────────────────────────────────────
+  let tags = [];
+  const tagInput = document.getElementById('tag-input');
+
+  tagInput.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ',') && tagInput.value.trim()) {
+      e.preventDefault();
+      addTag(tagInput.value.trim().toLowerCase());
+      tagInput.value = '';
+    }
+    if (e.key === 'Backspace' && tagInput.value === '' && tags.length)
+      removeTag(tags[tags.length - 1]);
+  });
+
+  function addTag(v) {
+    if (!v || tags.includes(v)) return;
+    tags.push(v); renderTags();
+  }
+  function removeTag(v) {
+    tags = tags.filter(t => t !== v); renderTags();
+  }
+  function renderTags() {
+    document.querySelectorAll('.tag').forEach(el => el.remove());
+    const wrapper = document.getElementById('tags-wrapper');
+    tags.forEach(t => {
+      const el = document.createElement('div');
+      el.className = 'tag';
+      el.innerHTML = `${t}<button onclick="removeTag('${t}')">×</button>`;
+      wrapper.insertBefore(el, tagInput);
+    });
+  }
+
+  // ── Submit ─────────────────────────────────────────────────────────────────
+  let currentJobId = null;
+  let pollTimer    = null;
+
+  async function submitJob() {
+    if (!selectedFile)  { showError('Please select a video file.'); return; }
+    if (!tags.length)   { showError('Add at least one detection label.'); return; }
+    hideError();
+
+    const conf   = parseFloat(document.getElementById('confidence').value);
+    const everyN = parseInt(document.getElementById('every-n').value);
+
+    const fd = new FormData();
+    fd.append('file',       selectedFile);
+    fd.append('labels',     tags.join(','));
+    fd.append('confidence', conf);
+    fd.append('every_n',    everyN);
+
+    document.getElementById('submit-btn').disabled = true;
+    document.getElementById('progress-section').style.display = 'flex';
+    setStatus('queued');
+
+    try {
+      const res  = await fetch('/process', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) { showError(data.detail || 'Upload failed.'); resetSubmitBtn(); return; }
+      currentJobId = data.job_id;
+      startPolling();
+    } catch(e) {
+      showError('Could not reach server.');
+      resetSubmitBtn();
+    }
+  }
+
+  function startPolling() {
+    pollTimer = setInterval(async () => {
+      try {
+        const d = await (await fetch(`/job/${currentJobId}`)).json();
+
+        // Update progress bar
+        document.getElementById('progress-pct').textContent  = d.progress.toFixed(1) + '%';
+        document.getElementById('progress-fill').style.width = d.progress + '%';
+
+        // Meta
+        if (d.total_frames)
+          document.getElementById('m-frames').textContent =
+            `${d.frames_done} / ${d.total_frames}`;
+        if (d.resolution)
+          document.getElementById('m-res').textContent = d.resolution;
+        if (d.proc_fps)
+          document.getElementById('m-pfps').textContent = d.proc_fps + ' fps';
+        if (d.eta_seconds !== undefined)
+          document.getElementById('m-eta').textContent =
+            d.eta_seconds > 0 ? formatETA(d.eta_seconds) : '—';
+
+        setStatus(d.status);
+
+        if (d.status === 'done') {
+          clearInterval(pollTimer);
+          document.getElementById('download-btn').style.display = 'block';
+          document.getElementById('reset-btn').style.display    = 'block';
+        } else if (d.status === 'failed') {
+          clearInterval(pollTimer);
+          showError(d.error || 'Processing failed.');
+          resetSubmitBtn();
+        }
+
+      } catch(e) {}
+    }, 1500);
+  }
+
+  function downloadResult() {
+    if (currentJobId) window.location.href = `/download/${currentJobId}`;
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function setStatus(s) {
+    const dot = document.getElementById('status-dot');
+    const txt = document.getElementById('status-text');
+    dot.className = 'status-dot';
+    const map = {
+      queued:     ['', 'Queued — waiting for model...'],
+      processing: ['processing', 'Processing...'],
+      done:       ['done', 'Done ✓'],
+      failed:     ['failed', 'Failed'],
+    };
+    const [cls, label] = map[s] || ['', s];
+    if (cls) dot.classList.add(cls);
+    txt.textContent = label;
+  }
+
+  function formatETA(s) {
+    if (s < 60)  return `${s}s`;
+    if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`;
+    return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error-box');
+    el.textContent = '⚠ ' + msg; el.style.display = 'block';
+  }
+  function hideError() { document.getElementById('error-box').style.display = 'none'; }
+
+  function resetSubmitBtn() {
+    document.getElementById('submit-btn').disabled = false;
+  }
+
+  function resetUI() {
+    selectedFile = null;
+    tags         = [];
+    currentJobId = null;
+    if (pollTimer) clearInterval(pollTimer);
+    document.getElementById('file-name').textContent           = '';
+    document.getElementById('file-input').value                = '';
+    document.getElementById('tags-wrapper').querySelectorAll('.tag').forEach(e => e.remove());
+    document.getElementById('progress-section').style.display  = 'none';
+    document.getElementById('download-btn').style.display      = 'none';
+    document.getElementById('reset-btn').style.display         = 'none';
+    document.getElementById('progress-fill').style.width       = '0%';
+    document.getElementById('progress-pct').textContent        = '0%';
+    document.getElementById('submit-btn').disabled             = false;
+    hideError();
+  }
+</script>
+</body>
+</html>
