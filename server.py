@@ -1,11 +1,11 @@
-import cv2, csv, time, threading, numpy as np, os, psutil, subprocess
+import cv2, time, threading, numpy as np, os, uuid, shutil
 from PIL import Image as PILImage
 from collections import defaultdict
 from datetime import datetime
 import torch
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 import supervision as sv
@@ -13,178 +13,93 @@ from supervision import ByteTrack
 from ultralytics.models.sam import SAM3SemanticPredictor
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MODEL_PATH = "/home/paras/sam3/sam3.pt"
-OUTPUT_DIR = "/home/paras/sam3/outputs"
-MAX_FRAMES = None
+MODEL_PATH  = "/home/paras/sam3/sam3.pt"
+UPLOAD_DIR  = "/home/paras/sam3/video_processor/uploads"
+OUTPUT_DIR  = "/home/paras/sam3/video_processor/outputs"
+MAX_FILE_MB = 500
 
-# ── Session state ─────────────────────────────────────────────────────────────
-session = {
-    "running":      False,
-    "frame":        None,
-    "counts":       {},
-    "fps":          0.0,
-    "frame_idx":    0,
-    "error":        None,
-    "labels":       [],
-    "rtsp_url":     None,
-    "started_at":   None,
-    "saving":       False,   # whether we are currently saving to disk
-    "save_path":    None,    # current video save path
-}
-session_lock   = threading.Lock()
-session_thread = None
+# ── Job store ─────────────────────────────────────────────────────────────────
+# jobs[job_id] = {status, progress, total_frames, error, output_path}
+jobs      = {}
+jobs_lock = threading.Lock()
 
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# ── Request models ────────────────────────────────────────────────────────────
-class StartRequest(BaseModel):
-    rtsp_url:   str
-    labels:     List[str]
-    confidence: float = 0.30
-    every_n:    int   = 5
-    save:       bool  = False   # start saving immediately
+# ── Load SAM3 once at startup ─────────────────────────────────────────────────
+predictor = None
 
-class SaveRequest(BaseModel):
-    save: bool   # True = start saving, False = stop saving
-
-# ── Cleanup old output files (30 min) ────────────────────────────────────────
-def cleanup_loop():
-    while True:
-        try:
-            cutoff = time.time() - 30 * 60
-            if os.path.exists(OUTPUT_DIR):
-                for fname in os.listdir(OUTPUT_DIR):
-                    if not (fname.endswith(".mp4") or fname.endswith(".csv")):
-                        continue
-                    fpath = os.path.join(OUTPUT_DIR, fname)
-                    if os.path.getmtime(fpath) < cutoff:
-                        os.remove(fpath)
-                        print(f"Deleted old file: {fname}")
-        except Exception as e:
-            print(f"Cleanup error: {e}")
-        time.sleep(300)
-
-# ── Detection loop ────────────────────────────────────────────────────────────
-def detection_loop(rtsp_url, labels, confidence, every_n, save_on_start):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    # Load SAM3
+def load_model():
+    global predictor
     print("Loading SAM3...")
     overrides = dict(
-        conf=confidence, task="segment", mode="predict",
+        conf=0.30, task="segment", mode="predict",
         model=MODEL_PATH, half=True, imgsz=644, verbose=False
     )
     predictor = SAM3SemanticPredictor(overrides=overrides)
-    print("SAM3 loaded")
+    print("SAM3 ready")
 
-    # ByteTrack + annotators
-    tracker   = ByteTrack(track_activation_threshold=0.25, lost_track_buffer=30,
-                          minimum_matching_threshold=0.8, frame_rate=15)
-    box_ann   = sv.BoxAnnotator(thickness=2)
-    lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
-    trace_ann = sv.TraceAnnotator(thickness=2, trace_length=40)
+# ── Processing worker ─────────────────────────────────────────────────────────
+def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int):
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # Open RTSP
-    print(f"Connecting RTSP: {rtsp_url}")
-    cap = cv2.VideoCapture(rtsp_url)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    if not cap.isOpened():
-        with session_lock:
-            session["error"]   = "Could not open RTSP stream"
-            session["running"] = False
-        print("ERROR: Could not open RTSP stream")
-        return
-
-    fps    = cap.get(cv2.CAP_PROP_FPS) or 15
-    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"Stream: {width}x{height} @ {fps}fps")
-
-    # Save state (can be toggled at runtime)
-    writer     = None
-    csv_file   = None
-    csv_writer = None
-
-    def open_writers(ts):
-        nonlocal writer, csv_file, csv_writer
-        vpath = f"{OUTPUT_DIR}/detection_{ts}.mp4"
-        cpath = f"{OUTPUT_DIR}/counts_{ts}.csv"
-        writer     = cv2.VideoWriter(vpath, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-        csv_file   = open(cpath, "w", newline="")
-        csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(["frame","timestamp"] + labels + ["total_tracks","fps"])
-        with session_lock:
-            session["save_path"] = vpath
-        print(f"Saving video : {vpath}")
-        print(f"Saving CSV   : {cpath}")
-
-    def close_writers():
-        nonlocal writer, csv_file, csv_writer
-        if writer:   writer.release();   writer = None
-        if csv_file: csv_file.close();   csv_file = None
-        csv_writer = None
-        with session_lock:
-            session["save_path"] = None
-        print("Stopped saving")
-
-    if save_on_start:
-        open_writers(datetime.now().strftime("%Y%m%d_%H%M%S"))
-        with session_lock:
-            session["saving"] = True
-
-    frame_idx    = 0
-    t_start      = time.time()
-    t_frame      = time.time()
-    fps_display  = 0.0
-    last_sv_dets = sv.Detections.empty()
-    palette      = [(0,200,100),(255,165,0),(100,149,237),(200,50,200),
-                    (0,200,200),(200,200,0),(255,80,80),(80,255,80)]
-
-    with session_lock:
-        session["running"]    = True
-        session["started_at"] = datetime.now().isoformat()
-        session["error"]      = None
+    def update(status=None, progress=None, error=None, output_path=None):
+        with jobs_lock:
+            if status:      jobs[job_id]["status"]      = status
+            if progress is not None:
+                            jobs[job_id]["progress"]    = progress
+            if error:       jobs[job_id]["error"]       = error
+            if output_path: jobs[job_id]["output_path"] = output_path
 
     try:
+        cap = cv2.VideoCapture(input_path)
+        if not cap.isOpened():
+            update(status="failed", error="Could not open video file")
+            return
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps          = cap.get(cv2.CAP_PROP_FPS) or 25
+        width        = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height       = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        with jobs_lock:
+            jobs[job_id]["total_frames"] = total_frames
+            jobs[job_id]["fps"]          = round(fps, 1)
+            jobs[job_id]["resolution"]   = f"{width}x{height}"
+
+        print(f"[{job_id}] {width}x{height} @ {fps}fps — {total_frames} frames — labels: {labels}")
+
+        output_path = f"{OUTPUT_DIR}/{job_id}_output.mp4"
+        writer      = cv2.VideoWriter(
+            output_path,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            fps, (width, height)
+        )
+
+        # ByteTrack + annotators (fresh per job)
+        tracker   = ByteTrack(track_activation_threshold=0.25, lost_track_buffer=30,
+                              minimum_matching_threshold=0.8, frame_rate=int(fps))
+        box_ann   = sv.BoxAnnotator(thickness=2)
+        lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
+        trace_ann = sv.TraceAnnotator(thickness=2, trace_length=40)
+
+        palette      = [(0,200,100),(255,165,0),(100,149,237),(200,50,200),
+                        (0,200,200),(200,200,0),(255,80,80),(80,255,80)]
+        last_sv_dets = sv.Detections.empty()
+        frame_idx    = 0
+        t_start      = time.time()
+
+        # Override confidence
+        predictor.overrides["conf"] = confidence
+
+        update(status="processing", progress=0)
+
         while True:
-            # ── Check stop / save-toggle signals ─────────────────────────────
-            with session_lock:
-                should_run  = session["running"]
-                should_save = session["saving"]
-
-            if not should_run:
-                print("Stop signal received")
-                break
-
-            # Toggle saving on/off at runtime
-            if should_save and writer is None:
-                open_writers(datetime.now().strftime("%Y%m%d_%H%M%S"))
-            elif not should_save and writer is not None:
-                close_writers()
-
-            # ── Read frame ───────────────────────────────────────────────────
             ret, frame = cap.read()
             if not ret:
-                with session_lock:
-                    if not session["running"]:
-                        break
-                print("Stream lost, reconnecting...")
-                cap.release()
-                time.sleep(2)
-                with session_lock:
-                    if not session["running"]:
-                        break
-                cap = cv2.VideoCapture(rtsp_url)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                if not cap.isOpened():
-                    print("Reconnect failed")
-                    break
-                continue
-
-            if MAX_FRAMES and frame_idx >= MAX_FRAMES:
                 break
 
-            # ── SAM3 every N frames ──────────────────────────────────────────
+            # SAM3 every N frames
             if frame_idx % every_n == 0:
                 rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil  = PILImage.fromarray(rgb)
@@ -199,222 +114,172 @@ def detection_loop(rtsp_url, labels, confidence, every_n, save_on_start):
                 else:
                     last_sv_dets = sv.Detections.empty()
 
-            # ── ByteTrack every frame ────────────────────────────────────────
+            # ByteTrack every frame
             tracked     = tracker.update_with_detections(last_sv_dets)
-            counts      = defaultdict(int)
             label_texts = []
-
             for tid, cls_id, conf in zip(
                 tracked.tracker_id if tracked.tracker_id is not None else [],
                 tracked.class_id   if tracked.class_id   is not None else [],
                 tracked.confidence if tracked.confidence is not None else []):
                 name = labels[cls_id] if cls_id < len(labels) else f"cls_{cls_id}"
-                counts[name] += 1
                 label_texts.append(f"#{tid} {name} {conf:.2f}")
 
-            # ── Annotate (no panel overlay — stats shown in UI) ──────────────
+            # Annotate
             annotated = frame.copy()
             annotated = trace_ann.annotate(annotated, tracked)
             annotated = box_ann.annotate(annotated, tracked)
             if label_texts:
                 annotated = lbl_ann.annotate(annotated, tracked, labels=label_texts)
 
-            # ── FPS ──────────────────────────────────────────────────────────
-            now         = time.time()
-            fps_display = 1.0 / max(now - t_frame, 1e-6)
-            t_frame     = now
-            elapsed     = now - t_start
-
-            # ── Push to browser ──────────────────────────────────────────────
-            with session_lock:
-                session["frame"]     = annotated.copy()
-                session["counts"]    = dict(counts)
-                session["fps"]       = fps_display
-                session["frame_idx"] = frame_idx
-
-            # ── Write to disk if saving ──────────────────────────────────────
-            if writer:
-                writer.write(annotated)
-            if csv_writer:
-                row = [frame_idx, round(elapsed,2)]
-                row += [counts.get(l,0) for l in labels]
-                row += [len(tracked), round(fps_display,2)]
-                csv_writer.writerow(row)
-
-            if frame_idx % 30 == 0:
-                print(f"Frame {frame_idx:05d} | {fps_display:.1f}fps | {dict(counts)}")
+            writer.write(annotated)
 
             frame_idx += 1
+            progress   = round((frame_idx / max(total_frames, 1)) * 100, 1)
+            elapsed    = time.time() - t_start
+            frames_left = total_frames - frame_idx
+            fps_so_far  = frame_idx / max(elapsed, 0.001)
+            eta_seconds = int(frames_left / max(fps_so_far, 0.001))
+
+            with jobs_lock:
+                jobs[job_id]["progress"]     = progress
+                jobs[job_id]["eta_seconds"]  = eta_seconds
+                jobs[job_id]["proc_fps"]     = round(fps_so_far, 1)
+                jobs[job_id]["frames_done"]  = frame_idx
+
+            if frame_idx % 50 == 0:
+                print(f"[{job_id}] {frame_idx}/{total_frames} ({progress}%) — {fps_so_far:.1f}fps — ETA {eta_seconds}s")
+
+        cap.release()
+        writer.release()
+
+        # Re-encode with ffmpeg for browser-compatible H.264
+        fixed_path = f"{OUTPUT_DIR}/{job_id}_final.mp4"
+        ret = os.system(
+            f'ffmpeg -y -i "{output_path}" -c:v libx264 -preset fast '
+            f'-crf 23 "{fixed_path}" -loglevel quiet'
+        )
+        if ret == 0 and os.path.exists(fixed_path):
+            os.remove(output_path)
+            final_path = fixed_path
+        else:
+            final_path = output_path   # fallback if ffmpeg not available
+
+        size_mb = round(os.path.getsize(final_path) / 1e6, 1)
+        update(status="done", progress=100, output_path=final_path)
+        with jobs_lock:
+            jobs[job_id]["size_mb"]     = size_mb
+            jobs[job_id]["eta_seconds"] = 0
+
+        print(f"[{job_id}] Done — {size_mb}MB — {final_path}")
 
     except Exception as e:
-        with session_lock:
-            session["error"] = str(e)
-        print(f"ERROR: {e}")
+        update(status="failed", error=str(e))
+        print(f"[{job_id}] ERROR: {e}")
     finally:
-        cap.release()
-        close_writers()
-        with session_lock:
-            session["running"] = False
-            session["saving"]  = False
-        print("Detection loop stopped")
+        # Clean up upload
+        if os.path.exists(input_path):
+            os.remove(input_path)
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
-@app.post("/session/start")
-def start_session(req: StartRequest):
-    global session_thread
-    with session_lock:
-        if session["running"]:
-            raise HTTPException(status_code=409, detail="Session already running. Stop it first.")
-        if not req.labels:
-            raise HTTPException(status_code=400, detail="Provide at least one label.")
-        session["labels"]    = req.labels
-        session["rtsp_url"]  = req.rtsp_url
-        session["frame"]     = None
-        session["counts"]    = {}
-        session["fps"]       = 0.0
-        session["frame_idx"] = 0
-        session["error"]     = None
-        session["saving"]    = req.save
-        session["save_path"] = None
+@app.post("/process")
+async def process(
+    file:       UploadFile = File(...),
+    labels:     str        = Form(...),   # comma-separated
+    confidence: float      = Form(0.30),
+    every_n:    int        = Form(5),
+):
+    # Validate
+    if not file.filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+        raise HTTPException(status_code=400, detail="Unsupported file type. Use MP4, AVI, MOV, MKV or WEBM.")
 
-    session_thread = threading.Thread(
-        target=detection_loop,
-        args=(req.rtsp_url, req.labels, req.confidence, req.every_n, req.save),
+    label_list = [l.strip().lower() for l in labels.split(",") if l.strip()]
+    if not label_list:
+        raise HTTPException(status_code=400, detail="Provide at least one label.")
+
+    # Check file size
+    contents = await file.read()
+    size_mb  = len(contents) / 1e6
+    if size_mb > MAX_FILE_MB:
+        raise HTTPException(status_code=413, detail=f"File too large. Max {MAX_FILE_MB}MB.")
+
+    # Save upload
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    job_id     = str(uuid.uuid4())[:8]
+    input_path = f"{UPLOAD_DIR}/{job_id}_{file.filename}"
+    with open(input_path, "wb") as f:
+        f.write(contents)
+
+    # Register job
+    with jobs_lock:
+        jobs[job_id] = {
+            "status":       "queued",
+            "progress":     0,
+            "total_frames": 0,
+            "frames_done":  0,
+            "fps":          0,
+            "proc_fps":     0,
+            "resolution":   "",
+            "eta_seconds":  0,
+            "size_mb":      0,
+            "error":        None,
+            "output_path":  None,
+            "filename":     file.filename,
+            "labels":       label_list,
+        }
+
+    # Start processing thread
+    t = threading.Thread(
+        target=process_video,
+        args=(job_id, input_path, label_list, confidence, every_n),
         daemon=True
     )
-    session_thread.start()
-    return {"status": "started", "labels": req.labels, "rtsp_url": req.rtsp_url}
+    t.start()
+
+    return JSONResponse({"job_id": job_id})
 
 
-@app.post("/session/stop")
-def stop_session():
-    with session_lock:
-        if not session["running"]:
-            return {"status": "not running"}
-        session["running"] = False
-        session["saving"]  = False
-
-    def force_clear():
-        time.sleep(4)
-        with session_lock:
-            session["frame"]     = None
-            session["counts"]    = {}
-            session["fps"]       = 0.0
-            session["frame_idx"] = 0
-    threading.Thread(target=force_clear, daemon=True).start()
-    return {"status": "stopping"}
+@app.get("/job/{job_id}")
+def job_status(job_id: str):
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return JSONResponse(job)
 
 
-@app.post("/session/save")
-def toggle_save(req: SaveRequest):
-    with session_lock:
-        if not session["running"]:
-            raise HTTPException(status_code=400, detail="No session running.")
-        session["saving"] = req.save
-    return {"status": "saving" if req.save else "not saving"}
+@app.get("/download/{job_id}")
+def download(job_id: str):
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "done":
+        raise HTTPException(status_code=400, detail="Job not complete yet")
+    path = job["output_path"]
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    original_name = os.path.splitext(job["filename"])[0]
+    download_name = f"{original_name}_detected.mp4"
+    return FileResponse(path, media_type="video/mp4",
+                        headers={"Content-Disposition": f"attachment; filename={download_name}"})
 
 
-@app.get("/session/status")
-def session_status():
-    with session_lock:
-        return JSONResponse({
-            "running":    session["running"],
-            "labels":     session["labels"],
-            "rtsp_url":   session["rtsp_url"],
-            "counts":     session["counts"],
-            "fps":        round(session["fps"], 2),
-            "frame_idx":  session["frame_idx"],
-            "started_at": session["started_at"],
-            "error":      session["error"],
-            "saving":     session["saving"],
-            "save_path":  session["save_path"],
-        })
-
-
-@app.get("/recordings")
-def list_recordings():
-    files = []
-    if os.path.exists(OUTPUT_DIR):
-        for fname in sorted(os.listdir(OUTPUT_DIR), reverse=True):
-            if not fname.endswith(".mp4"):
-                continue
-            fpath = os.path.join(OUTPUT_DIR, fname)
-            stat  = os.stat(fpath)
-            files.append({
-                "name":     fname,
-                "size_mb":  round(stat.st_size / 1e6, 1),
-                "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-            })
-    return JSONResponse(files)
-
-
-@app.get("/recordings/{filename}")
-def stream_recording(filename: str):
-    # Prevent path traversal
-    filename = os.path.basename(filename)
-    fpath    = os.path.join(OUTPUT_DIR, filename)
-    if not os.path.exists(fpath):
-        raise HTTPException(status_code=404, detail="File not found")
-
-    def iter_file():
-        with open(fpath, "rb") as f:
-            while chunk := f.read(1024 * 256):
-                yield chunk
-
-    return StreamingResponse(iter_file(), media_type="video/mp4",
-                             headers={"Content-Disposition": f"inline; filename={filename}"})
-
-
-@app.get("/video")
-def video_feed():
-    def generate():
-        while True:
-            with session_lock:
-                frame = session["frame"]
-            if frame is None:
-                blank = np.zeros((360,640,3), dtype=np.uint8)
-                cv2.putText(blank, "Waiting for stream...", (140,180),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (60,60,60), 2)
-                frame = blank
-            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
-            time.sleep(0.033)
-    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
-
-
-@app.get("/resources")
-def resources():
-    cpu = psutil.cpu_percent(interval=None)
-    ram = psutil.virtual_memory()
-    gpu_util = gpu_mem_used = gpu_mem_total = None
-    try:
-        result = subprocess.check_output([
-            "nvidia-smi",
-            "--query-gpu=utilization.gpu,memory.used,memory.total",
-            "--format=csv,noheader,nounits"
-        ]).decode().strip()
-        parts         = result.split(",")
-        gpu_util      = int(parts[0].strip())
-        gpu_mem_used  = int(parts[1].strip())
-        gpu_mem_total = int(parts[2].strip())
-    except Exception:
-        pass
-    return JSONResponse({
-        "cpu_percent":  round(cpu, 1),
-        "ram_percent":  round(ram.percent, 1),
-        "ram_used_gb":  round(ram.used / 1e9, 1),
-        "ram_total_gb": round(ram.total / 1e9, 1),
-        "gpu_util":     gpu_util,
-        "gpu_mem_used": gpu_mem_used,
-        "gpu_mem_total":gpu_mem_total,
-    })
+@app.delete("/job/{job_id}")
+def delete_job(job_id: str):
+    with jobs_lock:
+        job = jobs.pop(job_id, None)
+    if job and job.get("output_path") and os.path.exists(job["output_path"]):
+        os.remove(job["output_path"])
+    return {"status": "deleted"}
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "gpu":    torch.cuda.is_available(),
+        "model_loaded": predictor is not None,
+        "gpu": torch.cuda.is_available(),
         "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
     }
 
@@ -427,5 +292,4 @@ def index():
 
 @app.on_event("startup")
 def startup():
-    threading.Thread(target=cleanup_loop, daemon=True).start()
-    print("SAM3 server ready")
+    threading.Thread(target=load_model, daemon=False).start()
