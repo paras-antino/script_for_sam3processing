@@ -1,4 +1,4 @@
-import csv, cv2, json, time, threading, numpy as np, os, uuid, shutil, subprocess
+import csv, cv2, json, queue, time, threading, numpy as np, os, uuid, shutil, subprocess
 from fractions import Fraction
 from urllib.parse import quote
 from PIL import Image as PILImage
@@ -34,15 +34,16 @@ predictor = None
 def load_model():
     global predictor
     print("Loading SAM3...")
+    torch.backends.cudnn.benchmark = True
     overrides = dict(
         conf=0.30, task="segment", mode="predict",
-        model=MODEL_PATH, half=True, imgsz=644, verbose=False
+        model=MODEL_PATH, half=True, imgsz=1024, verbose=False
     )
     predictor = SAM3SemanticPredictor(overrides=overrides)
     print("SAM3 ready")
 
 # ── Processing worker ─────────────────────────────────────────────────────────
-def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int):
+def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int, imgsz: int = 1024):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     def update(status=None, progress=None, error=None, output_path=None):
@@ -122,29 +123,40 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         t_start         = time.time()
         detection_counts = defaultdict(int)
 
-        # Override confidence
-        # Build a fresh predictor with the correct confidence for this job
         overrides = dict(
             conf=confidence, task="segment", mode="predict",
-            model=MODEL_PATH, half=True, imgsz=644, verbose=False
+            model=MODEL_PATH, half=True, imgsz=imgsz, verbose=False
         )
         job_predictor = SAM3SemanticPredictor(overrides=overrides)
 
         update(status="processing", progress=0)
 
+        # Prefetch frames in background so GPU never waits on IO
+        frame_q    = queue.Queue(maxsize=64)
         frame_bytes = width * height * 3
+
+        def _decode():
+            while True:
+                raw = ffmpeg_read.stdout.read(frame_bytes)
+                if len(raw) < frame_bytes:
+                    frame_q.put(None)
+                    break
+                frame_q.put(np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).copy())
+
+        threading.Thread(target=_decode, daemon=True).start()
+
         while True:
-            raw = ffmpeg_read.stdout.read(frame_bytes)
-            if len(raw) < frame_bytes:
+            frame = frame_q.get()
+            if frame is None:
                 break
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
 
             # SAM3 every N frames
             if frame_idx % every_n == 0:
-                rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil  = PILImage.fromarray(rgb)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil = PILImage.fromarray(rgb)
                 job_predictor.set_image(pil)
-                results = job_predictor(text=labels)
+                with torch.amp.autocast("cuda"):
+                    results = job_predictor(text=labels)
                 if results and results[0].boxes is not None and len(results[0].boxes):
                     last_sv_dets = sv.Detections.from_ultralytics(results[0])
                 else:
@@ -223,6 +235,7 @@ async def process(
     labels:     str        = Form(...),   # comma-separated
     confidence: float      = Form(0.30),
     every_n:    int        = Form(5),
+    imgsz:      int        = Form(1024),
 ):
     # Validate
     if not file.filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
@@ -268,7 +281,7 @@ async def process(
     # Start processing thread
     t = threading.Thread(
         target=process_video,
-        args=(job_id, input_path, label_list, confidence, every_n),
+        args=(job_id, input_path, label_list, confidence, every_n, imgsz),
         daemon=True
     )
     t.start()
