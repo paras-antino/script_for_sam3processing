@@ -343,6 +343,31 @@ def health():
     }
 
 
+@app.get("/gpu")
+def gpu_stats():
+    try:
+        out = subprocess.check_output([
+            "nvidia-smi",
+            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit",
+            "--format=csv,noheader,nounits"
+        ], text=True, stderr=subprocess.DEVNULL)
+        gpus = []
+        for line in out.strip().splitlines():
+            name, util, mem_used, mem_total, temp, power, power_limit = [v.strip() for v in line.split(",")]
+            gpus.append({
+                "name":        name,
+                "util_pct":    int(util),
+                "mem_used_mb": int(mem_used),
+                "mem_total_mb":int(mem_total),
+                "temp_c":      int(temp),
+                "power_w":     round(float(power)),
+                "power_limit_w": round(float(power_limit)),
+            })
+        return {"gpus": gpus}
+    except Exception as e:
+        return {"gpus": [], "error": str(e)}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     with open(os.path.join(os.path.dirname(__file__), "frontend.html")) as f:
