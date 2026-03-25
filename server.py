@@ -90,7 +90,12 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         t_start      = time.time()
 
         # Override confidence
-        predictor.overrides["conf"] = confidence
+        # Build a fresh predictor with the correct confidence for this job
+        overrides = dict(
+            conf=confidence, task="segment", mode="predict",
+            model=MODEL_PATH, half=True, imgsz=644, verbose=False
+        )
+        job_predictor = SAM3SemanticPredictor(overrides=overrides)
 
         update(status="processing", progress=0)
 
