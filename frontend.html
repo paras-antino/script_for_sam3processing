@@ -121,15 +121,36 @@
     border-radius: 4px; padding: 10px; display: none;
   }
 
-  /* Download button */
-  #download-btn {
+  /* Download buttons */
+  .dl-btn {
     display: none; width: 100%; padding: 13px;
-    background: #1a1a2e; border: 1px solid #6495ed; color: #6495ed;
     border-radius: 6px; font-family: inherit; font-size: 0.88rem;
     font-weight: bold; letter-spacing: 1px; cursor: pointer;
     transition: background 0.2s;
   }
+  #download-btn {
+    background: #1a1a2e; border: 1px solid #6495ed; color: #6495ed;
+  }
   #download-btn:hover { background: #1e1e3a; }
+  #download-csv-btn {
+    background: #1a2a1a; border: 1px solid #00c864; color: #00c864;
+  }
+  #download-csv-btn:hover { background: #1a3a1a; }
+
+  /* Results summary */
+  #results-section {
+    display: none; flex-direction: column; gap: 10px;
+  }
+  .results-grid {
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .result-chip {
+    background: #0a1a0a; border: 1px solid #1e3a1e;
+    border-radius: 4px; padding: 6px 12px;
+    font-size: 0.75rem; color: #aaa;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .result-chip .chip-count { color: #00c864; font-size: 0.9rem; font-weight: bold; }
 
   /* Reset link */
   #reset-btn {
@@ -227,8 +248,15 @@
     </div>
   </div>
 
+  <!-- Results summary -->
+  <div id="results-section">
+    <div class="section-title">Detection Results</div>
+    <div class="results-grid" id="results-grid"></div>
+  </div>
+
   <!-- Download -->
-  <button id="download-btn" onclick="downloadResult()">⬇ DOWNLOAD PROCESSED VIDEO</button>
+  <button id="download-btn"     class="dl-btn" onclick="downloadVideo()">⬇ DOWNLOAD PROCESSED VIDEO</button>
+  <button id="download-csv-btn" class="dl-btn" onclick="downloadCSV()">⬇ DOWNLOAD DETECTIONS CSV</button>
 
   <!-- Reset -->
   <div id="reset-btn" onclick="resetUI()">↺ Process another video</div>
@@ -347,8 +375,10 @@
 
         if (d.status === 'done') {
           clearInterval(pollTimer);
-          document.getElementById('download-btn').style.display = 'block';
-          document.getElementById('reset-btn').style.display    = 'block';
+          document.getElementById('download-btn').style.display     = 'block';
+          document.getElementById('download-csv-btn').style.display = 'block';
+          document.getElementById('reset-btn').style.display        = 'block';
+          showResults(d.detection_counts);
         } else if (d.status === 'failed') {
           clearInterval(pollTimer);
           showError(d.error || 'Processing failed.');
@@ -359,8 +389,25 @@
     }, 1500);
   }
 
-  function downloadResult() {
+  function downloadVideo() {
     if (currentJobId) window.location.href = `/download/${currentJobId}`;
+  }
+  function downloadCSV() {
+    if (currentJobId) window.location.href = `/download_csv/${currentJobId}`;
+  }
+
+  function showResults(counts) {
+    if (!counts || !Object.keys(counts).length) return;
+    const section = document.getElementById('results-section');
+    const grid    = document.getElementById('results-grid');
+    grid.innerHTML = '';
+    for (const [label, count] of Object.entries(counts).sort((a,b) => b[1]-a[1])) {
+      const chip = document.createElement('div');
+      chip.className = 'result-chip';
+      chip.innerHTML = `${label} <span class="chip-count">${count.toLocaleString()}</span>`;
+      grid.appendChild(chip);
+    }
+    section.style.display = 'flex';
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -403,9 +450,12 @@
     document.getElementById('file-name').textContent           = '';
     document.getElementById('file-input').value                = '';
     document.getElementById('tags-wrapper').querySelectorAll('.tag').forEach(e => e.remove());
-    document.getElementById('progress-section').style.display  = 'none';
-    document.getElementById('download-btn').style.display      = 'none';
-    document.getElementById('reset-btn').style.display         = 'none';
+    document.getElementById('progress-section').style.display      = 'none';
+    document.getElementById('results-section').style.display        = 'none';
+    document.getElementById('download-btn').style.display           = 'none';
+    document.getElementById('download-csv-btn').style.display       = 'none';
+    document.getElementById('reset-btn').style.display              = 'none';
+    document.getElementById('results-grid').innerHTML               = '';
     document.getElementById('progress-fill').style.width       = '0%';
     document.getElementById('progress-pct').textContent        = '0%';
     document.getElementById('submit-btn').disabled             = false;

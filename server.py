@@ -1,4 +1,5 @@
-import cv2, time, threading, numpy as np, os, uuid, shutil
+import csv, cv2, time, threading, numpy as np, os, uuid, shutil
+from urllib.parse import quote
 from PIL import Image as PILImage
 from collections import defaultdict
 from datetime import datetime
@@ -70,11 +71,15 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         print(f"[{job_id}] {width}x{height} @ {fps}fps — {total_frames} frames — labels: {labels}")
 
         output_path = f"{OUTPUT_DIR}/{job_id}_output.mp4"
+        csv_path    = f"{OUTPUT_DIR}/{job_id}_detections.csv"
         writer      = cv2.VideoWriter(
             output_path,
             cv2.VideoWriter_fourcc(*"mp4v"),
             fps, (width, height)
         )
+        csv_file   = open(csv_path, "w", newline="", encoding="utf-8")
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(["frame", "track_id", "class", "confidence", "x1", "y1", "x2", "y2"])
 
         # ByteTrack + annotators (fresh per job)
         tracker   = ByteTrack(track_activation_threshold=0.25, lost_track_buffer=30,
@@ -83,11 +88,12 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
         trace_ann = sv.TraceAnnotator(thickness=2, trace_length=40)
 
-        palette      = [(0,200,100),(255,165,0),(100,149,237),(200,50,200),
-                        (0,200,200),(200,200,0),(255,80,80),(80,255,80)]
-        last_sv_dets = sv.Detections.empty()
-        frame_idx    = 0
-        t_start      = time.time()
+        palette         = [(0,200,100),(255,165,0),(100,149,237),(200,50,200),
+                           (0,200,200),(200,200,0),(255,80,80),(80,255,80)]
+        last_sv_dets    = sv.Detections.empty()
+        frame_idx       = 0
+        t_start         = time.time()
+        detection_counts = defaultdict(int)
 
         # Override confidence
         # Build a fresh predictor with the correct confidence for this job
@@ -108,8 +114,8 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
             if frame_idx % every_n == 0:
                 rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil  = PILImage.fromarray(rgb)
-                predictor.set_image(pil)
-                results = predictor(text=labels)
+                job_predictor.set_image(pil)
+                results = job_predictor(text=labels)
                 if results and results[0].boxes is not None:
                     r = results[0]
                     last_sv_dets = sv.Detections(
@@ -122,12 +128,18 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
             # ByteTrack every frame
             tracked     = tracker.update_with_detections(last_sv_dets)
             label_texts = []
-            for tid, cls_id, conf in zip(
-                tracked.tracker_id if tracked.tracker_id is not None else [],
-                tracked.class_id   if tracked.class_id   is not None else [],
-                tracked.confidence if tracked.confidence is not None else []):
+            tids   = tracked.tracker_id if tracked.tracker_id is not None else []
+            cids   = tracked.class_id   if tracked.class_id   is not None else []
+            confs  = tracked.confidence if tracked.confidence is not None else []
+            bboxes = tracked.xyxy       if len(tids) > 0 else []
+            for i, (tid, cls_id, conf) in enumerate(zip(tids, cids, confs)):
                 name = labels[cls_id] if cls_id < len(labels) else f"cls_{cls_id}"
                 label_texts.append(f"#{tid} {name} {conf:.2f}")
+                detection_counts[name] += 1
+                if i < len(bboxes):
+                    x1, y1, x2, y2 = bboxes[i]
+                    csv_writer.writerow([frame_idx, tid, name, f"{conf:.4f}",
+                                         f"{x1:.1f}", f"{y1:.1f}", f"{x2:.1f}", f"{y2:.1f}"])
 
             # Annotate
             annotated = frame.copy()
@@ -156,6 +168,7 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 
         cap.release()
         writer.release()
+        csv_file.close()
 
         # Re-encode with ffmpeg for browser-compatible H.264
         fixed_path = f"{OUTPUT_DIR}/{job_id}_final.mp4"
@@ -172,8 +185,10 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         size_mb = round(os.path.getsize(final_path) / 1e6, 1)
         update(status="done", progress=100, output_path=final_path)
         with jobs_lock:
-            jobs[job_id]["size_mb"]     = size_mb
-            jobs[job_id]["eta_seconds"] = 0
+            jobs[job_id]["size_mb"]          = size_mb
+            jobs[job_id]["eta_seconds"]      = 0
+            jobs[job_id]["csv_path"]         = csv_path
+            jobs[job_id]["detection_counts"] = dict(detection_counts)
 
         print(f"[{job_id}] Done — {size_mb}MB — {final_path}")
 
@@ -226,10 +241,12 @@ async def process(
             "resolution":   "",
             "eta_seconds":  0,
             "size_mb":      0,
-            "error":        None,
-            "output_path":  None,
-            "filename":     file.filename,
-            "labels":       label_list,
+            "error":             None,
+            "output_path":       None,
+            "csv_path":          None,
+            "detection_counts":  {},
+            "filename":          file.filename,
+            "labels":            label_list,
         }
 
     # Start processing thread
@@ -266,16 +283,37 @@ def download(job_id: str):
 
     original_name = os.path.splitext(job["filename"])[0]
     download_name = f"{original_name}_detected.mp4"
+    encoded_name = quote(download_name)
     return FileResponse(path, media_type="video/mp4",
-                        headers={"Content-Disposition": f"attachment; filename={download_name}"})
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"})
+
+
+@app.get("/download_csv/{job_id}")
+def download_csv(job_id: str):
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "done":
+        raise HTTPException(status_code=400, detail="Job not complete yet")
+    csv_path = job.get("csv_path")
+    if not csv_path or not os.path.exists(csv_path):
+        raise HTTPException(status_code=404, detail="CSV file not found")
+    original_name = os.path.splitext(job["filename"])[0]
+    encoded_name  = quote(f"{original_name}_detections.csv")
+    return FileResponse(csv_path, media_type="text/csv",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"})
 
 
 @app.delete("/job/{job_id}")
 def delete_job(job_id: str):
     with jobs_lock:
         job = jobs.pop(job_id, None)
-    if job and job.get("output_path") and os.path.exists(job["output_path"]):
-        os.remove(job["output_path"])
+    if job:
+        for key in ("output_path", "csv_path"):
+            p = job.get(key)
+            if p and os.path.exists(p):
+                os.remove(p)
     return {"status": "deleted"}
 
 
