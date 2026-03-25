@@ -1,4 +1,4 @@
-import csv, cv2, time, threading, numpy as np, os, uuid, shutil
+import csv, cv2, time, threading, numpy as np, os, uuid, shutil, subprocess
 from urllib.parse import quote
 from PIL import Image as PILImage
 from collections import defaultdict
@@ -70,13 +70,19 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 
         print(f"[{job_id}] {width}x{height} @ {fps}fps — {total_frames} frames — labels: {labels}")
 
-        output_path = f"{OUTPUT_DIR}/{job_id}_output.mp4"
-        csv_path    = f"{OUTPUT_DIR}/{job_id}_detections.csv"
-        writer      = cv2.VideoWriter(
-            output_path,
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            fps, (width, height)
-        )
+        final_path = f"{OUTPUT_DIR}/{job_id}_final.mp4"
+        csv_path   = f"{OUTPUT_DIR}/{job_id}_detections.csv"
+        ffmpeg_proc = subprocess.Popen([
+            "ffmpeg", "-y",
+            "-f", "rawvideo", "-vcodec", "rawvideo",
+            "-s", f"{width}x{height}",
+            "-pix_fmt", "bgr24",
+            "-r", str(fps),
+            "-i", "pipe:0",
+            "-c:v", "libx264", "-preset", "slow",
+            "-crf", "18", "-pix_fmt", "yuv420p",
+            final_path
+        ], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         csv_file   = open(csv_path, "w", newline="", encoding="utf-8")
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(["frame", "track_id", "class", "confidence", "x1", "y1", "x2", "y2"])
@@ -84,6 +90,7 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         # ByteTrack + annotators (fresh per job)
         tracker   = ByteTrack(track_activation_threshold=0.25, lost_track_buffer=30,
                               minimum_matching_threshold=0.8, frame_rate=int(fps))
+        mask_ann  = sv.MaskAnnotator(opacity=0.45)
         box_ann   = sv.BoxAnnotator(thickness=2)
         lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
         trace_ann = sv.TraceAnnotator(thickness=2, trace_length=40)
@@ -116,12 +123,8 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
                 pil  = PILImage.fromarray(rgb)
                 job_predictor.set_image(pil)
                 results = job_predictor(text=labels)
-                if results and results[0].boxes is not None:
-                    r = results[0]
-                    last_sv_dets = sv.Detections(
-                        xyxy=r.boxes.xyxy.cpu().numpy(),
-                        confidence=r.boxes.conf.cpu().numpy(),
-                        class_id=r.boxes.cls.cpu().numpy().astype(int))
+                if results and results[0].boxes is not None and len(results[0].boxes):
+                    last_sv_dets = sv.Detections.from_ultralytics(results[0])
                 else:
                     last_sv_dets = sv.Detections.empty()
 
@@ -143,12 +146,13 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 
             # Annotate
             annotated = frame.copy()
+            annotated = mask_ann.annotate(annotated, tracked)
             annotated = trace_ann.annotate(annotated, tracked)
             annotated = box_ann.annotate(annotated, tracked)
             if label_texts:
                 annotated = lbl_ann.annotate(annotated, tracked, labels=label_texts)
 
-            writer.write(annotated)
+            ffmpeg_proc.stdin.write(annotated.tobytes())
 
             frame_idx += 1
             progress   = round((frame_idx / max(total_frames, 1)) * 100, 1)
@@ -167,20 +171,9 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
                 print(f"[{job_id}] {frame_idx}/{total_frames} ({progress}%) — {fps_so_far:.1f}fps — ETA {eta_seconds}s")
 
         cap.release()
-        writer.release()
+        ffmpeg_proc.stdin.close()
+        ffmpeg_proc.wait()
         csv_file.close()
-
-        # Re-encode with ffmpeg for browser-compatible H.264
-        fixed_path = f"{OUTPUT_DIR}/{job_id}_final.mp4"
-        ret = os.system(
-            f'ffmpeg -y -i "{output_path}" -c:v libx264 -preset fast '
-            f'-crf 23 "{fixed_path}" -loglevel quiet'
-        )
-        if ret == 0 and os.path.exists(fixed_path):
-            os.remove(output_path)
-            final_path = fixed_path
-        else:
-            final_path = output_path   # fallback if ffmpeg not available
 
         size_mb = round(os.path.getsize(final_path) / 1e6, 1)
         update(status="done", progress=100, output_path=final_path)
