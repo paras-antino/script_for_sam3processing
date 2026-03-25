@@ -1,4 +1,5 @@
-import csv, cv2, time, threading, numpy as np, os, uuid, shutil, subprocess
+import csv, cv2, json, time, threading, numpy as np, os, uuid, shutil, subprocess
+from fractions import Fraction
 from urllib.parse import quote
 from PIL import Image as PILImage
 from collections import defaultdict
@@ -53,15 +54,28 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
             if output_path: jobs[job_id]["output_path"] = output_path
 
     try:
-        cap = cv2.VideoCapture(input_path)
-        if not cap.isOpened():
-            update(status="failed", error="Could not open video file")
+        # Probe metadata with ffprobe (handles any codec including AV1)
+        probe = subprocess.run([
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_streams", input_path
+        ], capture_output=True, text=True)
+        if probe.returncode != 0:
+            update(status="failed", error="Could not probe video file")
+            return
+        video_stream = next(
+            (s for s in json.loads(probe.stdout).get("streams", []) if s["codec_type"] == "video"),
+            None
+        )
+        if not video_stream:
+            update(status="failed", error="No video stream found")
             return
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps          = cap.get(cv2.CAP_PROP_FPS) or 25
-        width        = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height       = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        width        = int(video_stream["width"])
+        height       = int(video_stream["height"])
+        fps          = float(Fraction(video_stream.get("r_frame_rate", "25/1")))
+        total_frames = int(video_stream.get("nb_frames") or 0)
+        if total_frames == 0 and "duration" in video_stream:
+            total_frames = int(float(video_stream["duration"]) * fps)
 
         with jobs_lock:
             jobs[job_id]["total_frames"] = total_frames
@@ -69,6 +83,12 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
             jobs[job_id]["resolution"]   = f"{width}x{height}"
 
         print(f"[{job_id}] {width}x{height} @ {fps}fps — {total_frames} frames — labels: {labels}")
+
+        # Open ffmpeg decoder pipe (decodes any codec ffmpeg supports)
+        ffmpeg_read = subprocess.Popen([
+            "ffmpeg", "-i", input_path,
+            "-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"
+        ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
         final_path = f"{OUTPUT_DIR}/{job_id}_final.mp4"
         csv_path   = f"{OUTPUT_DIR}/{job_id}_detections.csv"
@@ -112,10 +132,12 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 
         update(status="processing", progress=0)
 
+        frame_bytes = width * height * 3
         while True:
-            ret, frame = cap.read()
-            if not ret:
+            raw = ffmpeg_read.stdout.read(frame_bytes)
+            if len(raw) < frame_bytes:
                 break
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
 
             # SAM3 every N frames
             if frame_idx % every_n == 0:
@@ -170,7 +192,8 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
             if frame_idx % 50 == 0:
                 print(f"[{job_id}] {frame_idx}/{total_frames} ({progress}%) — {fps_so_far:.1f}fps — ETA {eta_seconds}s")
 
-        cap.release()
+        ffmpeg_read.stdout.close()
+        ffmpeg_read.wait()
         ffmpeg_proc.stdin.close()
         ffmpeg_proc.wait()
         csv_file.close()
