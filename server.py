@@ -43,7 +43,7 @@ def load_model():
     print("SAM3 ready")
 
 # ── Processing worker ─────────────────────────────────────────────────────────
-def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int, imgsz: int = 1024):
+def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int, imgsz: int = 1024, batch_size: int = 4):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     def update(status=None, progress=None, error=None, output_path=None):
@@ -131,38 +131,80 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 
         update(status="processing", progress=0)
 
-        # Prefetch frames in background so GPU never waits on IO
-        frame_q    = queue.Queue(maxsize=64)
+        # ── Pipeline: infer thread (GPU) feeds result_q → main thread annotates (CPU) ──
         frame_bytes = width * height * 3
+        result_q    = queue.Queue(maxsize=batch_size * 4)
 
-        def _decode():
+        def _infer_worker():
+            """Decode frames, batch SAM3 inference, push (frame, dets) to result_q."""
+            local_fi   = 0
+            last_dets  = sv.Detections.empty()
+            batch_pils = []   # PIL images queued for SAM3
+            batch_meta = []   # (local_fi, is_infer, frame) for every frame in window
+
+            def _flush():
+                nonlocal last_dets
+                # Run SAM3 on accumulated PIL batch
+                if batch_pils:
+                    try:
+                        with torch.amp.autocast("cuda"):
+                            batch_results = job_predictor(batch_pils, text=labels)
+                    except Exception:
+                        # Fallback: sequential if batch call unsupported
+                        batch_results = []
+                        for pil in batch_pils:
+                            job_predictor.set_image(pil)
+                            with torch.amp.autocast("cuda"):
+                                r = job_predictor(text=labels)
+                            batch_results.extend(r or [])
+                    dets_iter = iter(
+                        sv.Detections.from_ultralytics(r)
+                        if (r.boxes is not None and len(r.boxes))
+                        else sv.Detections.empty()
+                        for r in (batch_results or [])
+                    )
+                else:
+                    dets_iter = iter([])
+
+                for (_, is_infer, frame) in batch_meta:
+                    if is_infer:
+                        last_dets = next(dets_iter, sv.Detections.empty())
+                    result_q.put((frame, last_dets))
+
             while True:
                 raw = ffmpeg_read.stdout.read(frame_bytes)
-                if len(raw) < frame_bytes:
-                    frame_q.put(None)
+                end = len(raw) < frame_bytes
+
+                if not end:
+                    frame    = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).copy()
+                    is_infer = (local_fi % every_n == 0)
+                    batch_meta.append((local_fi, is_infer, frame))
+                    if is_infer:
+                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        batch_pils.append(PILImage.fromarray(rgb))
+                    local_fi += 1
+
+                # Flush when batch_size infer frames are ready, or video ended
+                if batch_meta and (len(batch_pils) >= batch_size or end):
+                    _flush()
+                    batch_meta.clear()
+                    batch_pils.clear()
+
+                if end:
+                    result_q.put(None)
+                    ffmpeg_read.stdout.close()
+                    ffmpeg_read.wait()
                     break
-                frame_q.put(np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).copy())
 
-        threading.Thread(target=_decode, daemon=True).start()
+        threading.Thread(target=_infer_worker, daemon=True).start()
 
+        # Main thread: ByteTrack + annotate + encode
         while True:
-            frame = frame_q.get()
-            if frame is None:
+            item = result_q.get()
+            if item is None:
                 break
+            frame, last_sv_dets = item
 
-            # SAM3 every N frames
-            if frame_idx % every_n == 0:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil = PILImage.fromarray(rgb)
-                job_predictor.set_image(pil)
-                with torch.amp.autocast("cuda"):
-                    results = job_predictor(text=labels)
-                if results and results[0].boxes is not None and len(results[0].boxes):
-                    last_sv_dets = sv.Detections.from_ultralytics(results[0])
-                else:
-                    last_sv_dets = sv.Detections.empty()
-
-            # ByteTrack every frame
             tracked     = tracker.update_with_detections(last_sv_dets)
             label_texts = []
             tids   = tracked.tracker_id if tracked.tracker_id is not None else []
@@ -178,7 +220,6 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
                     csv_writer.writerow([frame_idx, tid, name, f"{conf:.4f}",
                                          f"{x1:.1f}", f"{y1:.1f}", f"{x2:.1f}", f"{y2:.1f}"])
 
-            # Annotate
             annotated = frame.copy()
             annotated = mask_ann.annotate(annotated, tracked)
             annotated = trace_ann.annotate(annotated, tracked)
@@ -189,23 +230,20 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
             ffmpeg_proc.stdin.write(annotated.tobytes())
 
             frame_idx += 1
-            progress   = round((frame_idx / max(total_frames, 1)) * 100, 1)
-            elapsed    = time.time() - t_start
-            frames_left = total_frames - frame_idx
+            progress    = round((frame_idx / max(total_frames, 1)) * 100, 1)
+            elapsed     = time.time() - t_start
             fps_so_far  = frame_idx / max(elapsed, 0.001)
-            eta_seconds = int(frames_left / max(fps_so_far, 0.001))
+            eta_seconds = int((total_frames - frame_idx) / max(fps_so_far, 0.001))
 
             with jobs_lock:
-                jobs[job_id]["progress"]     = progress
-                jobs[job_id]["eta_seconds"]  = eta_seconds
-                jobs[job_id]["proc_fps"]     = round(fps_so_far, 1)
-                jobs[job_id]["frames_done"]  = frame_idx
+                jobs[job_id]["progress"]    = progress
+                jobs[job_id]["eta_seconds"] = eta_seconds
+                jobs[job_id]["proc_fps"]    = round(fps_so_far, 1)
+                jobs[job_id]["frames_done"] = frame_idx
 
             if frame_idx % 50 == 0:
                 print(f"[{job_id}] {frame_idx}/{total_frames} ({progress}%) — {fps_so_far:.1f}fps — ETA {eta_seconds}s")
 
-        ffmpeg_read.stdout.close()
-        ffmpeg_read.wait()
         ffmpeg_proc.stdin.close()
         ffmpeg_proc.wait()
         csv_file.close()
@@ -233,9 +271,10 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 async def process(
     file:       UploadFile = File(...),
     labels:     str        = Form(...),   # comma-separated
-    confidence: float      = Form(0.30),
-    every_n:    int        = Form(5),
-    imgsz:      int        = Form(1024),
+    confidence:  float = Form(0.30),
+    every_n:     int   = Form(5),
+    imgsz:       int   = Form(1024),
+    batch_size:  int   = Form(4),
 ):
     # Validate
     if not file.filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
@@ -281,7 +320,7 @@ async def process(
     # Start processing thread
     t = threading.Thread(
         target=process_video,
-        args=(job_id, input_path, label_list, confidence, every_n, imgsz),
+        args=(job_id, input_path, label_list, confidence, every_n, imgsz, batch_size),
         daemon=True
     )
     t.start()
