@@ -347,7 +347,9 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
             w_ = csv.writer(cf)
             w_.writerow(["class", "confidence", "x1", "y1", "x2", "y2"])
             for cls_id, conf, (x1, y1, x2, y2) in zip(
-                dets.class_id or [], dets.confidence or [], dets.xyxy if len(dets) else []):
+                dets.class_id   if dets.class_id   is not None else [],
+                dets.confidence if dets.confidence is not None else [],
+                dets.xyxy       if len(dets) > 0   else []):
                 name = labels[cls_id] if cls_id < len(labels) else f"cls_{cls_id}"
                 w_.writerow([name, f"{conf:.4f}", f"{x1:.1f}", f"{y1:.1f}", f"{x2:.1f}", f"{y2:.1f}"])
 
