@@ -152,6 +152,12 @@
   }
   .result-chip .chip-count { color: #00c864; font-size: 0.9rem; font-weight: bold; }
 
+  /* Result image preview */
+  #result-image {
+    display: none; width: 100%; border-radius: 6px;
+    border: 1px solid #1e1e1e; margin-top: 4px;
+  }
+
   /* GPU panel */
   .gpu-panel {
     width: 100%; max-width: 560px; margin-top: 16px;
@@ -196,7 +202,7 @@
   <div>
     <label>Video File</label>
     <div class="dropzone" id="dropzone">
-      <input type="file" id="file-input" accept=".mp4,.avi,.mov,.mkv,.webm"
+      <input type="file" id="file-input" accept=".mp4,.avi,.mov,.mkv,.webm,.jpg,.jpeg,.png,.bmp,.webp,.tiff"
              onchange="onFileSelect(this)"/>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
@@ -204,7 +210,8 @@
         <line x1="12" y1="8" x2="12" y2="20"/>
       </svg>
       <p>Drop video here or click to browse</p>
-      <p>MP4 · AVI · MOV · MKV · WEBM — max 500MB</p>
+      <p>Video: MP4 · AVI · MOV · MKV · WEBM — max 500MB</p>
+      <p>Image: JPG · PNG · BMP · WEBP · TIFF</p>
       <div class="file-name" id="file-name"></div>
     </div>
   </div>
@@ -230,7 +237,7 @@
   </div>
 
   <!-- SAM3 every N -->
-  <div>
+  <div class="video-only">
     <div class="slider-row">
       <label style="margin:0">SAM3 Every N Frames <span style="color:#333;font-size:.65rem">(higher = faster)</span></label>
       <span class="slider-val" id="everyn-val">5</span>
@@ -250,7 +257,7 @@
   </div>
 
   <!-- Batch size -->
-  <div>
+  <div class="video-only">
     <div class="slider-row">
       <label style="margin:0">Batch Size <span style="color:#333;font-size:.65rem">(frames per GPU call — higher = faster, more VRAM)</span></label>
       <span class="slider-val" id="batch-val">4</span>
@@ -312,6 +319,9 @@
     </div>
   </div>
 
+  <!-- Image result preview -->
+  <img id="result-image" alt="Detection result"/>
+
   <!-- Results summary -->
   <div id="results-section">
     <div class="section-title">Detection Results</div>
@@ -344,13 +354,20 @@
     if (f) setFile(f);
   });
 
+  const IMAGE_EXTS = ['.jpg','.jpeg','.png','.bmp','.webp','.tiff','.tif'];
   let selectedFile = null;
+  let isImage = false;
+
   function onFileSelect(input) {
     if (input.files[0]) setFile(input.files[0]);
   }
   function setFile(f) {
     selectedFile = f;
+    isImage = IMAGE_EXTS.some(e => f.name.toLowerCase().endsWith(e));
     document.getElementById('file-name').textContent = `✓ ${f.name}  (${(f.size/1e6).toFixed(1)} MB)`;
+    // Hide video-only controls for images
+    const videoOnly = ['every-n', 'batch-size'].map(id => document.getElementById(id)?.closest('div.card > div'));
+    document.querySelectorAll('.video-only').forEach(el => el.style.display = isImage ? 'none' : '');
   }
 
   // ── Tags ───────────────────────────────────────────────────────────────────
@@ -455,6 +472,11 @@
           document.getElementById('download-csv-btn').style.display = 'block';
           document.getElementById('reset-btn').style.display        = 'block';
           showResults(d.detection_counts);
+          if (d.output_type === 'image') {
+            const img = document.getElementById('result-image');
+            img.src = `/download/${currentJobId}?t=${Date.now()}`;
+            img.style.display = 'block';
+          }
         } else if (d.status === 'failed') {
           clearInterval(pollTimer);
           showError(d.error || 'Processing failed.');
@@ -536,6 +558,9 @@
     document.getElementById('download-csv-btn').style.display       = 'none';
     document.getElementById('reset-btn').style.display              = 'none';
     document.getElementById('results-grid').innerHTML               = '';
+    document.getElementById('result-image').style.display           = 'none';
+    document.getElementById('result-image').src                     = '';
+    document.querySelectorAll('.video-only').forEach(el => el.style.display = '');
     document.getElementById('progress-fill').style.width       = '0%';
     document.getElementById('progress-pct').textContent        = '0%';
     document.getElementById('submit-btn').disabled             = false;

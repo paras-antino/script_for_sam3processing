@@ -189,54 +189,29 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 
         update(status="processing", progress=0)
 
-        # ── Pipeline: infer thread (GPU) feeds result_q → main thread annotates (CPU) ──
-        frame_bytes = width * height * 3
-        result_q    = queue.Queue(maxsize=32)
+        frame_bytes  = width * height * 3
+        last_sv_dets = sv.Detections.empty()
 
-        def _infer_worker():
-            """Decode frames, run SAM3 inference, push (frame, dets) to result_q.
-            SAM3 does not support batched inference — process one frame at a time.
-            The pipeline (this thread vs annotate thread) still runs concurrently."""
-            local_fi  = 0
-            last_dets = sv.Detections.empty()
-
-            while True:
-                raw = ffmpeg_read.stdout.read(frame_bytes)
-                if len(raw) < frame_bytes:
-                    result_q.put(None)
-                    ffmpeg_read.stdout.close()
-                    ffmpeg_read.wait()
-                    break
-
-                frame    = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).copy()
-                is_infer = (local_fi % every_n == 0)
-
-                if is_infer:
-                    if tile_size > 0:
-                        last_dets = tiled_infer(frame, job_predictor, labels, tile_size)
-                    else:
-                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        pil = PILImage.fromarray(rgb)
-                        job_predictor.set_image(pil)
-                        with torch.amp.autocast("cuda"):
-                            results = job_predictor(text=labels)
-                        if results and results[0].boxes is not None and len(results[0].boxes):
-                            last_dets = sv.Detections.from_ultralytics(results[0])
-                        else:
-                            last_dets = sv.Detections.empty()
-                    torch.cuda.empty_cache()
-
-                result_q.put((frame, last_dets))
-                local_fi += 1
-
-        threading.Thread(target=_infer_worker, daemon=True).start()
-
-        # Main thread: ByteTrack + annotate + encode
         while True:
-            item = result_q.get()
-            if item is None:
+            raw = ffmpeg_read.stdout.read(frame_bytes)
+            if len(raw) < frame_bytes:
                 break
-            frame, last_sv_dets = item
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).copy()
+
+            # Run SAM3 every N frames
+            if frame_idx % every_n == 0:
+                if tile_size > 0:
+                    last_sv_dets = tiled_infer(frame, job_predictor, labels, tile_size)
+                else:
+                    pil = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    job_predictor.set_image(pil)
+                    with torch.amp.autocast("cuda"):
+                        results = job_predictor(text=labels)
+                    if results and results[0].boxes is not None and len(results[0].boxes):
+                        last_sv_dets = sv.Detections.from_ultralytics(results[0])
+                    else:
+                        last_sv_dets = sv.Detections.empty()
+                torch.cuda.empty_cache()
 
             tracked     = tracker.update_with_detections(last_sv_dets)
             label_texts = []
@@ -277,6 +252,8 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
             if frame_idx % 50 == 0:
                 print(f"[{job_id}] {frame_idx}/{total_frames} ({progress}%) — {fps_so_far:.1f}fps — ETA {eta_seconds}s")
 
+        ffmpeg_read.stdout.close()
+        ffmpeg_read.wait()
         ffmpeg_proc.stdin.close()
         ffmpeg_proc.wait()
         csv_file.close()
@@ -299,6 +276,100 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         if os.path.exists(input_path):
             os.remove(input_path)
 
+# ── Image processing worker ───────────────────────────────────────────────────
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif")
+VIDEO_EXTS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
+
+def process_image(job_id: str, input_path: str, labels: list, confidence: float, imgsz: int, tile_size: int):
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    def update(status=None, progress=None, error=None, output_path=None):
+        with jobs_lock:
+            if status:      jobs[job_id]["status"]      = status
+            if progress is not None: jobs[job_id]["progress"] = progress
+            if error:       jobs[job_id]["error"]       = error
+            if output_path: jobs[job_id]["output_path"] = output_path
+
+    try:
+        frame = cv2.imread(input_path)
+        if frame is None:
+            update(status="failed", error="Could not read image file")
+            return
+
+        h, w = frame.shape[:2]
+        with jobs_lock:
+            jobs[job_id]["resolution"]   = f"{w}x{h}"
+            jobs[job_id]["total_frames"] = 1
+
+        overrides = dict(conf=confidence, task="segment", mode="predict",
+                         model=MODEL_PATH, half=True, imgsz=imgsz, verbose=False)
+        job_predictor = SAM3SemanticPredictor(overrides=overrides)
+        update(status="processing", progress=0)
+
+        if tile_size > 0:
+            dets = tiled_infer(frame, job_predictor, labels, tile_size)
+        else:
+            pil = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            job_predictor.set_image(pil)
+            with torch.amp.autocast("cuda"):
+                results = job_predictor(text=labels)
+            if results and results[0].boxes is not None and len(results[0].boxes):
+                dets = sv.Detections.from_ultralytics(results[0])
+            else:
+                dets = sv.Detections.empty()
+        torch.cuda.empty_cache()
+
+        mask_ann  = sv.MaskAnnotator(opacity=0.45)
+        box_ann   = sv.BoxAnnotator(thickness=2)
+        lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
+        label_texts = []
+        detection_counts = defaultdict(int)
+
+        tids  = dets.tracker_id if dets.tracker_id is not None else [None] * len(dets)
+        cids  = dets.class_id   if dets.class_id   is not None else []
+        confs = dets.confidence if dets.confidence is not None else []
+        for tid, cls_id, conf in zip(tids, cids, confs):
+            name = labels[cls_id] if cls_id < len(labels) else f"cls_{cls_id}"
+            label_texts.append(f"{name} {conf:.2f}")
+            detection_counts[name] += 1
+
+        annotated = frame.copy()
+        annotated = mask_ann.annotate(annotated, dets)
+        annotated = box_ann.annotate(annotated, dets)
+        if label_texts:
+            annotated = lbl_ann.annotate(annotated, dets, labels=label_texts)
+
+        out_path = f"{OUTPUT_DIR}/{job_id}_detected.jpg"
+        cv2.imwrite(out_path, annotated, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+        csv_path = f"{OUTPUT_DIR}/{job_id}_detections.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as cf:
+            w_ = csv.writer(cf)
+            w_.writerow(["class", "confidence", "x1", "y1", "x2", "y2"])
+            for cls_id, conf, (x1, y1, x2, y2) in zip(
+                dets.class_id or [], dets.confidence or [], dets.xyxy if len(dets) else []):
+                name = labels[cls_id] if cls_id < len(labels) else f"cls_{cls_id}"
+                w_.writerow([name, f"{conf:.4f}", f"{x1:.1f}", f"{y1:.1f}", f"{x2:.1f}", f"{y2:.1f}"])
+
+        size_mb = round(os.path.getsize(out_path) / 1e6, 1)
+        update(status="done", progress=100, output_path=out_path)
+        with jobs_lock:
+            jobs[job_id]["size_mb"]         = size_mb
+            jobs[job_id]["frames_done"]     = 1
+            jobs[job_id]["csv_path"]        = csv_path
+            jobs[job_id]["detection_counts"]= dict(detection_counts)
+            jobs[job_id]["output_type"]     = "image"
+
+        print(f"[{job_id}] Image done — {len(dets)} detections — {out_path}")
+
+    except Exception as e:
+        update(status="failed", error=str(e))
+        print(f"[{job_id}] ERROR: {e}")
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
+
 # ── API endpoints ─────────────────────────────────────────────────────────────
 @app.post("/process")
 async def process(
@@ -310,9 +381,10 @@ async def process(
     batch_size:  int   = Form(4),
     tile_size:   int   = Form(0),
 ):
+    fname = file.filename.lower()
     # Validate
-    if not file.filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
-        raise HTTPException(status_code=400, detail="Unsupported file type. Use MP4, AVI, MOV, MKV or WEBM.")
+    if not (any(fname.endswith(e) for e in VIDEO_EXTS) or any(fname.endswith(e) for e in IMAGE_EXTS)):
+        raise HTTPException(status_code=400, detail="Unsupported file type. Use MP4/AVI/MOV/MKV/WEBM or JPG/PNG/BMP/WEBP.")
 
     label_list = [l.strip().lower() for l in labels.split(",") if l.strip()]
     if not label_list:
@@ -347,16 +419,24 @@ async def process(
             "output_path":       None,
             "csv_path":          None,
             "detection_counts":  {},
+            "output_type":       "image" if any(fname.endswith(e) for e in IMAGE_EXTS) else "video",
             "filename":          file.filename,
             "labels":            label_list,
         }
 
-    # Start processing thread
-    t = threading.Thread(
-        target=process_video,
-        args=(job_id, input_path, label_list, confidence, every_n, imgsz, batch_size, tile_size),
-        daemon=True
-    )
+    is_image = any(fname.endswith(e) for e in IMAGE_EXTS)
+    if is_image:
+        t = threading.Thread(
+            target=process_image,
+            args=(job_id, input_path, label_list, confidence, imgsz, tile_size),
+            daemon=True
+        )
+    else:
+        t = threading.Thread(
+            target=process_video,
+            args=(job_id, input_path, label_list, confidence, every_n, imgsz, batch_size, tile_size),
+            daemon=True
+        )
     t.start()
 
     return JSONResponse({"job_id": job_id})
@@ -384,9 +464,14 @@ def download(job_id: str):
         raise HTTPException(status_code=404, detail="Output file not found")
 
     original_name = os.path.splitext(job["filename"])[0]
-    download_name = f"{original_name}_detected.mp4"
+    if job.get("output_type") == "image":
+        download_name = f"{original_name}_detected.jpg"
+        media_type    = "image/jpeg"
+    else:
+        download_name = f"{original_name}_detected.mp4"
+        media_type    = "video/mp4"
     encoded_name = quote(download_name)
-    return FileResponse(path, media_type="video/mp4",
+    return FileResponse(path, media_type=media_type,
                         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"})
 
 
