@@ -58,16 +58,13 @@ def tiled_infer(frame, predictor, labels, tile_size=640, overlap=0.25):
             tiles.append(PILImage.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)))
             offsets.append((x1, y1))
 
-    try:
+    batch_results = []
+    for t in tiles:
+        predictor.set_image(t)
         with torch.amp.autocast("cuda"):
-            batch_results = predictor(tiles, text=labels)
-    except Exception:
-        batch_results = []
-        for t in tiles:
-            predictor.set_image(t)
-            with torch.amp.autocast("cuda"):
-                r = predictor(text=labels)
-            batch_results.extend(r or [])
+            r = predictor(text=labels)
+        batch_results.extend(r or [])
+        torch.cuda.empty_cache()
 
     all_xyxy, all_conf, all_cls, all_masks = [], [], [], []
     has_masks = False
@@ -194,78 +191,43 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 
         # ── Pipeline: infer thread (GPU) feeds result_q → main thread annotates (CPU) ──
         frame_bytes = width * height * 3
-        result_q    = queue.Queue(maxsize=batch_size * 4)
+        result_q    = queue.Queue(maxsize=32)
 
         def _infer_worker():
-            """Decode frames, batch SAM3 inference, push (frame, dets) to result_q."""
-            local_fi   = 0
-            last_dets  = sv.Detections.empty()
-            batch_pils = []   # PIL images queued for SAM3
-            batch_meta = []   # (local_fi, is_infer, frame) for every frame in window
-
-            def _flush():
-                nonlocal last_dets
-                # Run SAM3 on accumulated PIL batch
-                if batch_pils:
-                    try:
-                        with torch.amp.autocast("cuda"):
-                            batch_results = job_predictor(batch_pils, text=labels)
-                    except Exception:
-                        # Fallback: sequential if batch call unsupported
-                        batch_results = []
-                        for pil in batch_pils:
-                            job_predictor.set_image(pil)
-                            with torch.amp.autocast("cuda"):
-                                r = job_predictor(text=labels)
-                            batch_results.extend(r or [])
-                    dets_iter = iter(
-                        sv.Detections.from_ultralytics(r)
-                        if (r.boxes is not None and len(r.boxes))
-                        else sv.Detections.empty()
-                        for r in (batch_results or [])
-                    )
-                else:
-                    dets_iter = iter([])
-
-                for (_, is_infer, frame) in batch_meta:
-                    if is_infer:
-                        last_dets = next(dets_iter, sv.Detections.empty())
-                    result_q.put((frame, last_dets))
+            """Decode frames, run SAM3 inference, push (frame, dets) to result_q.
+            SAM3 does not support batched inference — process one frame at a time.
+            The pipeline (this thread vs annotate thread) still runs concurrently."""
+            local_fi  = 0
+            last_dets = sv.Detections.empty()
 
             while True:
                 raw = ffmpeg_read.stdout.read(frame_bytes)
-                end = len(raw) < frame_bytes
-
-                if not end:
-                    frame    = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).copy()
-                    is_infer = (local_fi % every_n == 0)
-                    batch_meta.append((local_fi, is_infer, frame))
-                    if is_infer:
-                        if tile_size > 0:
-                            # Tiled mode: tiles form the batch internally
-                            last_dets = tiled_infer(frame, job_predictor, labels, tile_size)
-                            result_q.put((frame, last_dets))
-                            batch_meta.clear()
-                        else:
-                            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                            batch_pils.append(PILImage.fromarray(rgb))
-                    elif tile_size > 0:
-                        # Non-infer frame in tiled mode — reuse last dets
-                        result_q.put((frame, last_dets))
-                        batch_meta.clear()
-                    local_fi += 1
-
-                # Flush when batch_size infer frames are ready, or video ended (non-tiled)
-                if tile_size == 0 and batch_meta and (len(batch_pils) >= batch_size or end):
-                    _flush()
-                    batch_meta.clear()
-                    batch_pils.clear()
-
-                if end:
+                if len(raw) < frame_bytes:
                     result_q.put(None)
                     ffmpeg_read.stdout.close()
                     ffmpeg_read.wait()
                     break
+
+                frame    = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3)).copy()
+                is_infer = (local_fi % every_n == 0)
+
+                if is_infer:
+                    if tile_size > 0:
+                        last_dets = tiled_infer(frame, job_predictor, labels, tile_size)
+                    else:
+                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        pil = PILImage.fromarray(rgb)
+                        job_predictor.set_image(pil)
+                        with torch.amp.autocast("cuda"):
+                            results = job_predictor(text=labels)
+                        if results and results[0].boxes is not None and len(results[0].boxes):
+                            last_dets = sv.Detections.from_ultralytics(results[0])
+                        else:
+                            last_dets = sv.Detections.empty()
+                    torch.cuda.empty_cache()
+
+                result_q.put((frame, last_dets))
+                local_fi += 1
 
         threading.Thread(target=_infer_worker, daemon=True).start()
 
