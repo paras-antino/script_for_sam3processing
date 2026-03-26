@@ -42,8 +42,69 @@ def load_model():
     predictor = SAM3SemanticPredictor(overrides=overrides)
     print("SAM3 ready")
 
+# ── Tiled (SAHI-style) inference ──────────────────────────────────────────────
+def tiled_infer(frame, predictor, labels, tile_size=640, overlap=0.25):
+    """Slice frame into overlapping tiles, run predictor on all tiles in one
+    batch, then merge detections back to full-frame coordinates + NMS."""
+    h, w = frame.shape[:2]
+    stride  = int(tile_size * (1 - overlap))
+    tiles, offsets = [], []
+
+    for y in range(0, h, stride):
+        for x in range(0, w, stride):
+            x2, y2 = min(x + tile_size, w), min(y + tile_size, h)
+            x1, y1 = max(0, x2 - tile_size),  max(0, y2 - tile_size)
+            crop = frame[y1:y2, x1:x2]
+            tiles.append(PILImage.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)))
+            offsets.append((x1, y1))
+
+    try:
+        with torch.amp.autocast("cuda"):
+            batch_results = predictor(tiles, text=labels)
+    except Exception:
+        batch_results = []
+        for t in tiles:
+            predictor.set_image(t)
+            with torch.amp.autocast("cuda"):
+                r = predictor(text=labels)
+            batch_results.extend(r or [])
+
+    all_xyxy, all_conf, all_cls, all_masks = [], [], [], []
+    has_masks = False
+
+    for result, (ox, oy) in zip(batch_results or [], offsets):
+        if result.boxes is None or len(result.boxes) == 0:
+            continue
+        dets = sv.Detections.from_ultralytics(result)
+        boxes = dets.xyxy.copy()
+        boxes[:, [0, 2]] += ox
+        boxes[:, [1, 3]] += oy
+        all_xyxy.append(boxes)
+        all_conf.append(dets.confidence)
+        all_cls.append(dets.class_id)
+        if dets.mask is not None:
+            has_masks = True
+            full = np.zeros((len(dets.mask), h, w), dtype=bool)
+            for i, m in enumerate(dets.mask):
+                ph = min(m.shape[0], h - oy)
+                pw = min(m.shape[1], w - ox)
+                full[i, oy:oy + ph, ox:ox + pw] = m[:ph, :pw]
+            all_masks.append(full)
+
+    if not all_xyxy:
+        return sv.Detections.empty()
+
+    merged = sv.Detections(
+        xyxy       = np.concatenate(all_xyxy),
+        confidence = np.concatenate(all_conf),
+        class_id   = np.concatenate(all_cls),
+        mask       = np.concatenate(all_masks) if has_masks and all_masks else None,
+    )
+    return merged.with_nms(threshold=0.5)
+
+
 # ── Processing worker ─────────────────────────────────────────────────────────
-def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int, imgsz: int = 1024, batch_size: int = 4):
+def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int, imgsz: int = 1024, batch_size: int = 4, tile_size: int = 0):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     def update(status=None, progress=None, error=None, output_path=None):
@@ -180,12 +241,22 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
                     is_infer = (local_fi % every_n == 0)
                     batch_meta.append((local_fi, is_infer, frame))
                     if is_infer:
-                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        batch_pils.append(PILImage.fromarray(rgb))
+                        if tile_size > 0:
+                            # Tiled mode: tiles form the batch internally
+                            last_dets = tiled_infer(frame, job_predictor, labels, tile_size)
+                            result_q.put((frame, last_dets))
+                            batch_meta.clear()
+                        else:
+                            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            batch_pils.append(PILImage.fromarray(rgb))
+                    elif tile_size > 0:
+                        # Non-infer frame in tiled mode — reuse last dets
+                        result_q.put((frame, last_dets))
+                        batch_meta.clear()
                     local_fi += 1
 
-                # Flush when batch_size infer frames are ready, or video ended
-                if batch_meta and (len(batch_pils) >= batch_size or end):
+                # Flush when batch_size infer frames are ready, or video ended (non-tiled)
+                if tile_size == 0 and batch_meta and (len(batch_pils) >= batch_size or end):
                     _flush()
                     batch_meta.clear()
                     batch_pils.clear()
@@ -275,6 +346,7 @@ async def process(
     every_n:     int   = Form(5),
     imgsz:       int   = Form(1024),
     batch_size:  int   = Form(4),
+    tile_size:   int   = Form(0),
 ):
     # Validate
     if not file.filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
@@ -320,7 +392,7 @@ async def process(
     # Start processing thread
     t = threading.Thread(
         target=process_video,
-        args=(job_id, input_path, label_list, confidence, every_n, imgsz, batch_size),
+        args=(job_id, input_path, label_list, confidence, every_n, imgsz, batch_size, tile_size),
         daemon=True
     )
     t.start()

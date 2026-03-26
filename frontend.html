@@ -259,6 +259,26 @@
            oninput="document.getElementById('batch-val').textContent=this.value"/>
   </div>
 
+  <!-- Tiled inference -->
+  <div>
+    <label style="margin-bottom:8px">Small Object / Zoom-out Mode</label>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:0.78rem;color:#aaa;cursor:pointer">
+        <input type="checkbox" id="tile-enable" onchange="onTileToggle(this)"
+               style="accent-color:#00c864;width:14px;height:14px"/>
+        Enable tiled inference (detects small objects in zoomed-out video)
+      </label>
+    </div>
+    <div id="tile-opts" style="display:none;margin-top:10px">
+      <div class="slider-row">
+        <label style="margin:0">Tile Size <span style="color:#333;font-size:.65rem">(px — smaller = catches tinier objects, slower)</span></label>
+        <span class="slider-val" id="tile-val">640</span>
+      </div>
+      <input type="range" id="tile-size" min="320" max="1024" step="64" value="640"
+             oninput="document.getElementById('tile-val').textContent=this.value"/>
+    </div>
+  </div>
+
   <!-- Error -->
   <div id="error-box"></div>
 
@@ -378,6 +398,8 @@
     const everyN = parseInt(document.getElementById('every-n').value);
     const imgsz     = parseInt(document.getElementById('imgsz').value);
     const batchSize = parseInt(document.getElementById('batch-size').value);
+    const tileEnabled = document.getElementById('tile-enable').checked;
+    const tileSize  = tileEnabled ? parseInt(document.getElementById('tile-size').value) : 0;
 
     const fd = new FormData();
     fd.append('file',       selectedFile);
@@ -386,6 +408,7 @@
     fd.append('every_n',    everyN);
     fd.append('imgsz',      imgsz);
     fd.append('batch_size', batchSize);
+    fd.append('tile_size',  tileSize);
 
     document.getElementById('submit-btn').disabled = true;
     document.getElementById('progress-section').style.display = 'flex';
@@ -440,6 +463,10 @@
 
       } catch(e) {}
     }, 1500);
+  }
+
+  function onTileToggle(cb) {
+    document.getElementById('tile-opts').style.display = cb.checked ? 'block' : 'none';
   }
 
   function downloadVideo() {
