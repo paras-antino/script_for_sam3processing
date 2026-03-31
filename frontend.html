@@ -54,12 +54,15 @@
   }
   .tags-wrapper:focus-within { border-color: #00c864; }
   .tag {
-    background: #0a1a0a; border: 1px solid #00c864; color: #00c864;
     border-radius: 3px; padding: 2px 8px; font-size: 0.72rem;
     display: flex; align-items: center; gap: 5px;
+    border: 1px solid; /* color set inline */
   }
-  .tag button { background: none; border: none; color: #00c864; cursor: pointer; font-size: 0.8rem; opacity: 0.6; }
+  .tag button { background: none; border: none; cursor: pointer; font-size: 0.8rem; opacity: 0.6; }
   .tag button:hover { opacity: 1; }
+  .color-swatch {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block;
+  }
   #tag-input {
     background: none; border: none; outline: none; color: #e0e0e0;
     font-family: inherit; font-size: 0.82rem; padding: 2px 4px;
@@ -145,12 +148,12 @@
     display: flex; flex-wrap: wrap; gap: 8px;
   }
   .result-chip {
-    background: #0a1a0a; border: 1px solid #1e3a1e;
+    background: #111; border: 1px solid #222;
     border-radius: 4px; padding: 6px 12px;
     font-size: 0.75rem; color: #aaa;
     display: flex; gap: 8px; align-items: center;
   }
-  .result-chip .chip-count { color: #00c864; font-size: 0.9rem; font-weight: bold; }
+  .result-chip .chip-count { font-size: 0.9rem; font-weight: bold; }
 
   /* Result image preview */
   #result-image {
@@ -370,6 +373,31 @@
     document.querySelectorAll('.video-only').forEach(el => el.style.display = isImage ? 'none' : '');
   }
 
+  // ── Color palette ──────────────────────────────────────────────────────────
+  const PALETTE = [
+    '#00c864','#6495ed','#f0a020','#e05555','#a78bfa',
+    '#22d3ee','#fb7185','#34d399','#fbbf24','#c084fc',
+    '#38bdf8','#f97316','#4ade80','#e879f9','#60a5fa',
+  ];
+  const labelColors = {};   // label → color
+  let paletteIdx = 0;
+
+  function getColor(label) {
+    if (!labelColors[label]) {
+      // pick a color not currently in use
+      const used = new Set(Object.values(labelColors));
+      let color = PALETTE[paletteIdx % PALETTE.length];
+      // scan forward for an unused slot (wraps if all used)
+      for (let i = 0; i < PALETTE.length; i++) {
+        const c = PALETTE[(paletteIdx + i) % PALETTE.length];
+        if (!used.has(c)) { color = c; break; }
+      }
+      paletteIdx = (PALETTE.indexOf(color) + 1) % PALETTE.length;
+      labelColors[label] = color;
+    }
+    return labelColors[label];
+  }
+
   // ── Tags ───────────────────────────────────────────────────────────────────
   let tags = [];
   const tagInput = document.getElementById('tag-input');
@@ -386,18 +414,24 @@
 
   function addTag(v) {
     if (!v || tags.includes(v)) return;
-    tags.push(v); renderTags();
+    tags.push(v);
+    getColor(v);   // pre-assign color now
+    renderTags();
   }
   function removeTag(v) {
-    tags = tags.filter(t => t !== v); renderTags();
+    delete labelColors[v];
+    tags = tags.filter(t => t !== v);
+    renderTags();
   }
   function renderTags() {
     document.querySelectorAll('.tag').forEach(el => el.remove());
     const wrapper = document.getElementById('tags-wrapper');
     tags.forEach(t => {
+      const c = getColor(t);
       const el = document.createElement('div');
       el.className = 'tag';
-      el.innerHTML = `${t}<button onclick="removeTag('${t}')">×</button>`;
+      el.style.cssText = `border-color:${c};color:${c};background:${c}18`;
+      el.innerHTML = `<span class="color-swatch" style="background:${c}"></span>${t}<button style="color:${c}" onclick="removeTag('${t}')">×</button>`;
       wrapper.insertBefore(el, tagInput);
     });
   }
@@ -504,9 +538,11 @@
     const grid    = document.getElementById('results-grid');
     grid.innerHTML = '';
     for (const [label, count] of Object.entries(counts).sort((a,b) => b[1]-a[1])) {
+      const c = getColor(label);
       const chip = document.createElement('div');
       chip.className = 'result-chip';
-      chip.innerHTML = `${label} <span class="chip-count">${count.toLocaleString()}</span>`;
+      chip.style.cssText = `border-color:${c}44`;
+      chip.innerHTML = `<span class="color-swatch" style="background:${c}"></span>${label} <span class="chip-count" style="color:${c}">${count.toLocaleString()}</span>`;
       grid.appendChild(chip);
     }
     section.style.display = 'flex';
@@ -548,6 +584,8 @@
     selectedFile = null;
     tags         = [];
     currentJobId = null;
+    Object.keys(labelColors).forEach(k => delete labelColors[k]);
+    paletteIdx = 0;
     if (pollTimer) clearInterval(pollTimer);
     document.getElementById('file-name').textContent           = '';
     document.getElementById('file-input').value                = '';
