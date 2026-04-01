@@ -14,7 +14,7 @@
   }
 
   h1 { color: #00c864; font-size: 1.2rem; letter-spacing: 3px; margin-bottom: 6px; }
-  .subtitle { color: #333; font-size: 0.72rem; margin-bottom: 40px; }
+  .subtitle { color: #fff; font-size: 0.72rem; margin-bottom: 40px; }
 
   .card {
     background: black; border: 1px solid #1e1e1e;
@@ -24,13 +24,13 @@
   }
 
   .section-title {
-    font-size: 0.62rem; letter-spacing: 2px; color: #444;
+    font-size: 0.62rem; letter-spacing: 2px; color: #fff;
     text-transform: uppercase; padding-bottom: 10px;
     border-bottom: 1px solid #1a1a1a;
   }
 
   label {
-    display: block; font-size: 0.68rem; color: #555;
+    display: block; font-size: 0.68rem; color: #fff;
     text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;
   }
 
@@ -42,8 +42,8 @@
   }
   .dropzone:hover, .dropzone.dragover { border-color: #00c864; background: #0a1a0a; }
   .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
-  .dropzone svg { width: 36px; height: 36px; color: #333; margin-bottom: 10px; }
-  .dropzone p   { font-size: 0.78rem; color: #444; }
+  .dropzone svg { width: 36px; height: 36px; color: #fff; margin-bottom: 10px; }
+  .dropzone p   { font-size: 0.78rem; color: #fff; }
   .dropzone .file-name { color: #00c864; font-size: 0.82rem; margin-top: 8px; }
 
   /* Tags */
@@ -68,7 +68,7 @@
     font-family: inherit; font-size: 0.82rem; padding: 2px 4px;
     flex: 1; min-width: 80px;
   }
-  .hint { font-size: 0.65rem; color: #2a2a2a; margin-top: 4px; }
+  .hint { font-size: 0.65rem; color: #fff; margin-top: 4px; }
 
   /* Slider */
   .slider-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
@@ -90,7 +90,7 @@
   #progress-section { display: none; flex-direction: column; gap: 14px; }
 
   .progress-header { display: flex; justify-content: space-between; align-items: center; }
-  .progress-label  { font-size: 0.72rem; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+  .progress-label  { font-size: 0.72rem; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
   .progress-pct    { font-size: 1rem; font-weight: bold; color: #00c864; }
 
   .progress-track {
@@ -105,10 +105,10 @@
     display: flex; gap: 16px; flex-wrap: wrap;
   }
   .pmeta {
-    font-size: 0.68rem; color: #444;
+    font-size: 0.68rem; color: #fff;
     display: flex; flex-direction: column; gap: 2px;
   }
-  .pmeta span { color: #aaa; font-size: 0.82rem; }
+  .pmeta span { color: #fff; font-size: 0.82rem; }
 
   /* Status states */
   .status-row { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; }
@@ -150,7 +150,7 @@
   .result-chip {
     background: #111; border: 1px solid #222;
     border-radius: 4px; padding: 6px 12px;
-    font-size: 0.75rem; color: #aaa;
+    font-size: 0.75rem; color: #fff;
     display: flex; gap: 8px; align-items: center;
   }
   .result-chip .chip-count { font-size: 0.9rem; font-weight: bold; }
@@ -169,14 +169,14 @@
     display: flex; flex-direction: column; gap: 14px;
   }
   .gpu-row { display: flex; flex-direction: column; gap: 8px; }
-  .gpu-name { font-size: 0.72rem; color: #555; letter-spacing: 1px; }
+  .gpu-name { font-size: 0.72rem; color: #fff; letter-spacing: 1px; }
   .gpu-metrics { display: flex; gap: 12px; flex-wrap: wrap; }
   .gm {
     background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 4px;
     padding: 6px 10px; display: flex; flex-direction: column; gap: 2px;
     min-width: 80px;
   }
-  .gm-label { font-size: 0.6rem; color: #444; text-transform: uppercase; letter-spacing: 1px; }
+  .gm-label { font-size: 0.6rem; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
   .gm-value { font-size: 0.88rem; color: #e0e0e0; }
   .gm-value.hot  { color: #e05555; }
   .gm-value.warm { color: #f0a020; }
@@ -187,10 +187,10 @@
 
   /* Reset link */
   #reset-btn {
-    text-align: center; font-size: 0.72rem; color: #333;
+    text-align: center; font-size: 0.72rem; color: #fff;
     cursor: pointer; display: none;
   }
-  #reset-btn:hover { color: #888; }
+  #reset-btn:hover { color: #ccc; }
 </style>
 </head>
 <body>
@@ -242,7 +242,7 @@
   <!-- SAM3 every N -->
   <div class="video-only">
     <div class="slider-row">
-      <label style="margin:0">SAM3 Every N Frames <span style="color:#333;font-size:.65rem">(higher = faster)</span></label>
+      <label style="margin:0">SAM3 Every N Frames <span style="color:#fff;font-size:.65rem">(higher = faster)</span></label>
       <span class="slider-val" id="everyn-val">5</span>
     </div>
     <input type="range" id="every-n" min="1" max="15" step="1" value="5"
@@ -252,7 +252,7 @@
   <!-- Image size -->
   <div>
     <div class="slider-row">
-      <label style="margin:0">Image Size <span style="color:#333;font-size:.65rem">(larger = better quality, more VRAM)</span></label>
+      <label style="margin:0">Image Size <span style="color:#fff;font-size:.65rem">(larger = better quality, more VRAM)</span></label>
       <span class="slider-val" id="imgsz-val">1024</span>
     </div>
     <input type="range" id="imgsz" min="640" max="1536" step="128" value="1024"
@@ -262,7 +262,7 @@
   <!-- Batch size -->
   <div class="video-only">
     <div class="slider-row">
-      <label style="margin:0">Batch Size <span style="color:#333;font-size:.65rem">(frames per GPU call — higher = faster, more VRAM)</span></label>
+      <label style="margin:0">Batch Size <span style="color:#fff;font-size:.65rem">(frames per GPU call — higher = faster, more VRAM)</span></label>
       <span class="slider-val" id="batch-val">4</span>
     </div>
     <input type="range" id="batch-size" min="1" max="16" step="1" value="4"
@@ -273,7 +273,7 @@
   <div>
     <label style="margin-bottom:8px">Small Object / Zoom-out Mode</label>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:0.78rem;color:#aaa;cursor:pointer">
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:0.78rem;color:#fff;cursor:pointer">
         <input type="checkbox" id="tile-enable" onchange="onTileToggle(this)"
                style="accent-color:#00c864;width:14px;height:14px"/>
         Enable tiled inference (detects small objects in zoomed-out video)
@@ -281,7 +281,7 @@
     </div>
     <div id="tile-opts" style="display:none;margin-top:10px">
       <div class="slider-row">
-        <label style="margin:0">Tile Size <span style="color:#333;font-size:.65rem">(px — smaller = catches tinier objects, slower)</span></label>
+        <label style="margin:0">Tile Size <span style="color:#fff;font-size:.65rem">(px — smaller = catches tinier objects, slower)</span></label>
         <span class="slider-val" id="tile-val">640</span>
       </div>
       <input type="range" id="tile-size" min="320" max="1024" step="64" value="640"
@@ -342,7 +342,7 @@
 
 <div class="gpu-panel">
   <div class="section-title">GPU Monitor</div>
-  <div id="gpu-rows"><span style="font-size:0.72rem;color:#333">Loading...</span></div>
+  <div id="gpu-rows"><span style="font-size:0.72rem;color:#fff">Loading...</span></div>
 </div>
 
 <script>
@@ -618,7 +618,7 @@
       const d = await (await fetch('/gpu')).json();
       const container = document.getElementById('gpu-rows');
       if (!d.gpus || !d.gpus.length) {
-        container.innerHTML = '<span style="font-size:0.72rem;color:#333">No GPU detected</span>';
+        container.innerHTML = '<span style="font-size:0.72rem;color:#fff">No GPU detected</span>';
         return;
       }
       container.innerHTML = d.gpus.map(g => {
