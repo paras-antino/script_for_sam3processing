@@ -379,21 +379,20 @@
     '#22d3ee','#fb7185','#34d399','#fbbf24','#c084fc',
     '#38bdf8','#f97316','#4ade80','#e879f9','#60a5fa',
   ];
-  const labelColors = {};   // label → color
+  // label → color; persists across remove/re-add so the same label always gets the same color
+  const labelColors = {};
   let paletteIdx = 0;
 
   function getColor(label) {
     if (!labelColors[label]) {
-      // pick a color not currently in use
-      const used = new Set(Object.values(labelColors));
-      let color = PALETTE[paletteIdx % PALETTE.length];
-      // scan forward for an unused slot (wraps if all used)
+      // find next palette slot not currently assigned to an active label
+      const active = new Set(Object.values(labelColors));
+      let chosen = PALETTE[paletteIdx % PALETTE.length]; // fallback (all used)
       for (let i = 0; i < PALETTE.length; i++) {
         const c = PALETTE[(paletteIdx + i) % PALETTE.length];
-        if (!used.has(c)) { color = c; break; }
+        if (!active.has(c)) { chosen = c; paletteIdx = (PALETTE.indexOf(c) + 1) % PALETTE.length; break; }
       }
-      paletteIdx = (PALETTE.indexOf(color) + 1) % PALETTE.length;
-      labelColors[label] = color;
+      labelColors[label] = chosen;
     }
     return labelColors[label];
   }
@@ -415,23 +414,31 @@
   function addTag(v) {
     if (!v || tags.includes(v)) return;
     tags.push(v);
-    getColor(v);   // pre-assign color now
+    getColor(v); // assign color now so it's stable
     renderTags();
   }
   function removeTag(v) {
-    delete labelColors[v];
+    // keep labelColors[v] so re-adding the same label gets the same color
     tags = tags.filter(t => t !== v);
     renderTags();
   }
   function renderTags() {
-    document.querySelectorAll('.tag').forEach(el => el.remove());
     const wrapper = document.getElementById('tags-wrapper');
+    wrapper.querySelectorAll('.tag').forEach(el => el.remove());
     tags.forEach(t => {
       const c = getColor(t);
       const el = document.createElement('div');
       el.className = 'tag';
-      el.style.cssText = `border-color:${c};color:${c};background:${c}18`;
-      el.innerHTML = `<span class="color-swatch" style="background:${c}"></span>${t}<button style="color:${c}" onclick="removeTag('${t}')">×</button>`;
+      el.style.cssText = `border-color:${c};color:${c};background:${c}1a`;
+      const swatch = document.createElement('span');
+      swatch.className = 'color-swatch';
+      swatch.style.background = c;
+      const text = document.createTextNode(t);
+      const btn = document.createElement('button');
+      btn.textContent = '×';
+      btn.style.color = c;
+      btn.addEventListener('click', e => { e.stopPropagation(); removeTag(t); });
+      el.append(swatch, text, btn);
       wrapper.insertBefore(el, tagInput);
     });
   }
@@ -453,13 +460,14 @@
     const tileSize  = tileEnabled ? parseInt(document.getElementById('tile-size').value) : 0;
 
     const fd = new FormData();
-    fd.append('file',       selectedFile);
-    fd.append('labels',     tags.join(','));
-    fd.append('confidence', conf);
-    fd.append('every_n',    everyN);
-    fd.append('imgsz',      imgsz);
-    fd.append('batch_size', batchSize);
-    fd.append('tile_size',  tileSize);
+    fd.append('file',         selectedFile);
+    fd.append('labels',       tags.join(','));
+    fd.append('confidence',   conf);
+    fd.append('every_n',      everyN);
+    fd.append('imgsz',        imgsz);
+    fd.append('batch_size',   batchSize);
+    fd.append('tile_size',    tileSize);
+    fd.append('label_colors', JSON.stringify(Object.fromEntries(tags.map(t => [t, getColor(t)]))));
 
     document.getElementById('submit-btn').disabled = true;
     document.getElementById('progress-section').style.display = 'flex';

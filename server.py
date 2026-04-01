@@ -101,7 +101,7 @@ def tiled_infer(frame, predictor, labels, tile_size=640, overlap=0.25):
 
 
 # ── Processing worker ─────────────────────────────────────────────────────────
-def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int, imgsz: int = 1024, batch_size: int = 4, tile_size: int = 0):
+def process_video(job_id: str, input_path: str, labels: list, confidence: float, every_n: int, imgsz: int = 1024, batch_size: int = 4, tile_size: int = 0, label_colors: dict = None):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     def update(status=None, progress=None, error=None, output_path=None):
@@ -164,7 +164,7 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         ], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         csv_file   = open(csv_path, "w", newline="", encoding="utf-8")
         csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(["frame", "track_id", "class", "confidence", "x1", "y1", "x2", "y2"])
+        csv_writer.writerow(["frame", "track_id", "class", "color", "confidence", "x1", "y1", "x2", "y2"])
 
         # ByteTrack + annotators (fresh per job)
         tracker   = ByteTrack(track_activation_threshold=0.25, lost_track_buffer=30,
@@ -225,7 +225,8 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
                 detection_counts[name] += 1
                 if i < len(bboxes):
                     x1, y1, x2, y2 = bboxes[i]
-                    csv_writer.writerow([frame_idx, tid, name, f"{conf:.4f}",
+                    color = (label_colors or {}).get(name, "")
+                    csv_writer.writerow([frame_idx, tid, name, color, f"{conf:.4f}",
                                          f"{x1:.1f}", f"{y1:.1f}", f"{x2:.1f}", f"{y2:.1f}"])
 
             annotated = frame.copy()
@@ -280,7 +281,7 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif")
 VIDEO_EXTS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 
-def process_image(job_id: str, input_path: str, labels: list, confidence: float, imgsz: int, tile_size: int):
+def process_image(job_id: str, input_path: str, labels: list, confidence: float, imgsz: int, tile_size: int, label_colors: dict = None):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     def update(status=None, progress=None, error=None, output_path=None):
@@ -345,13 +346,14 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
         csv_path = f"{OUTPUT_DIR}/{job_id}_detections.csv"
         with open(csv_path, "w", newline="", encoding="utf-8") as cf:
             w_ = csv.writer(cf)
-            w_.writerow(["class", "confidence", "x1", "y1", "x2", "y2"])
+            w_.writerow(["class", "color", "confidence", "x1", "y1", "x2", "y2"])
             for cls_id, conf, (x1, y1, x2, y2) in zip(
                 dets.class_id   if dets.class_id   is not None else [],
                 dets.confidence if dets.confidence is not None else [],
                 dets.xyxy       if len(dets) > 0   else []):
                 name = labels[cls_id] if cls_id < len(labels) else f"cls_{cls_id}"
-                w_.writerow([name, f"{conf:.4f}", f"{x1:.1f}", f"{y1:.1f}", f"{x2:.1f}", f"{y2:.1f}"])
+                color = (label_colors or {}).get(name, "")
+                w_.writerow([name, color, f"{conf:.4f}", f"{x1:.1f}", f"{y1:.1f}", f"{x2:.1f}", f"{y2:.1f}"])
 
         size_mb = round(os.path.getsize(out_path) / 1e6, 1)
         update(status="done", progress=100, output_path=out_path)
@@ -376,12 +378,13 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
 @app.post("/process")
 async def process(
     file:       UploadFile = File(...),
-    labels:     str        = Form(...),   # comma-separated
-    confidence:  float = Form(0.30),
-    every_n:     int   = Form(5),
-    imgsz:       int   = Form(1024),
-    batch_size:  int   = Form(4),
-    tile_size:   int   = Form(0),
+    labels:       str   = Form(...),   # comma-separated
+    confidence:   float = Form(0.30),
+    every_n:      int   = Form(5),
+    imgsz:        int   = Form(1024),
+    batch_size:   int   = Form(4),
+    tile_size:    int   = Form(0),
+    label_colors: str   = Form("{}"),  # JSON: {"label": "#hexcolor"}
 ):
     fname = file.filename.lower()
     # Validate
@@ -391,6 +394,10 @@ async def process(
     label_list = [l.strip().lower() for l in labels.split(",") if l.strip()]
     if not label_list:
         raise HTTPException(status_code=400, detail="Provide at least one label.")
+    try:
+        colors_map = json.loads(label_colors)
+    except Exception:
+        colors_map = {}
 
     # Check file size
     contents = await file.read()
@@ -430,13 +437,13 @@ async def process(
     if is_image:
         t = threading.Thread(
             target=process_image,
-            args=(job_id, input_path, label_list, confidence, imgsz, tile_size),
+            args=(job_id, input_path, label_list, confidence, imgsz, tile_size, colors_map),
             daemon=True
         )
     else:
         t = threading.Thread(
             target=process_video,
-            args=(job_id, input_path, label_list, confidence, every_n, imgsz, batch_size, tile_size),
+            args=(job_id, input_path, label_list, confidence, every_n, imgsz, batch_size, tile_size, colors_map),
             daemon=True
         )
     t.start()
