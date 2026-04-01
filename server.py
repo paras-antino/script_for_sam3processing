@@ -169,16 +169,17 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         # ByteTrack + annotators (fresh per job)
         tracker   = ByteTrack(track_activation_threshold=0.25, lost_track_buffer=30,
                               minimum_matching_threshold=0.8, frame_rate=int(fps))
-        mask_ann  = sv.MaskAnnotator(opacity=0.45)
-        box_ann   = sv.BoxAnnotator(thickness=2)
-        lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
-        trace_ann = sv.TraceAnnotator(thickness=2, trace_length=40)
-
-        palette         = [(0,200,100),(255,165,0),(100,149,237),(200,50,200),
-                           (0,200,200),(200,200,0),(255,80,80),(80,255,80)]
-        last_sv_dets    = sv.Detections.empty()
-        frame_idx       = 0
-        t_start         = time.time()
+        color_palette = sv.ColorPalette(colors=[
+            sv.Color.from_hex((label_colors or {}).get(lbl, "#00c864"))
+            for lbl in labels
+        ])
+        mask_ann  = sv.MaskAnnotator(opacity=0.45, color=color_palette)
+        box_ann   = sv.BoxAnnotator(thickness=2, color=color_palette)
+        lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, color=color_palette, text_color=sv.Color.WHITE)
+        trace_ann = sv.TraceAnnotator(thickness=2, trace_length=40, color=color_palette)
+        last_sv_dets     = sv.Detections.empty()
+        frame_idx        = 0
+        t_start          = time.time()
         detection_counts = defaultdict(int)
 
         overrides = dict(
@@ -320,9 +321,13 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
                 dets = sv.Detections.empty()
         torch.cuda.empty_cache()
 
-        mask_ann  = sv.MaskAnnotator(opacity=0.45)
-        box_ann   = sv.BoxAnnotator(thickness=2)
-        lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
+        color_palette = sv.ColorPalette(colors=[
+            sv.Color.from_hex((label_colors or {}).get(lbl, "#00c864"))
+            for lbl in labels
+        ])
+        mask_ann  = sv.MaskAnnotator(opacity=0.45, color=color_palette)
+        box_ann   = sv.BoxAnnotator(thickness=2, color=color_palette)
+        lbl_ann   = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, color=color_palette, text_color=sv.Color.WHITE)
         label_texts = []
         detection_counts = defaultdict(int)
 
