@@ -4,6 +4,7 @@ from urllib.parse import quote
 from PIL import Image as PILImage
 from collections import defaultdict
 from datetime import datetime
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -182,11 +183,9 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         t_start          = time.time()
         detection_counts = defaultdict(int)
 
-        overrides = dict(
-            conf=confidence, task="segment", mode="predict",
-            model=MODEL_PATH, half=True, imgsz=imgsz, verbose=False
-        )
-        job_predictor = SAM3SemanticPredictor(overrides=overrides)
+        job_predictor = predictor
+        job_predictor.overrides["conf"]  = confidence
+        job_predictor.overrides["imgsz"] = imgsz
 
         update(status="processing", progress=0)
 
@@ -303,9 +302,9 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
             jobs[job_id]["resolution"]   = f"{w}x{h}"
             jobs[job_id]["total_frames"] = 1
 
-        overrides = dict(conf=confidence, task="segment", mode="predict",
-                         model=MODEL_PATH, half=True, imgsz=imgsz, verbose=False)
-        job_predictor = SAM3SemanticPredictor(overrides=overrides)
+        job_predictor = predictor
+        job_predictor.overrides["conf"]  = confidence
+        job_predictor.overrides["imgsz"] = imgsz
         update(status="processing", progress=0)
 
         if tile_size > 0:
