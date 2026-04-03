@@ -25,6 +25,8 @@ MAX_FILE_MB = 500
 # jobs[job_id] = {status, progress, total_frames, error, output_path}
 jobs      = {}
 jobs_lock = threading.Lock()
+# Ensures only one job runs inference at a time (GPU memory is not shared)
+infer_lock = threading.Lock()
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -183,10 +185,12 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         t_start          = time.time()
         detection_counts = defaultdict(int)
 
-        job_predictor = predictor
-        job_predictor.overrides["conf"]  = confidence
-        job_predictor.overrides["imgsz"] = imgsz
-
+        overrides = dict(
+            conf=confidence, task="segment", mode="predict",
+            model=MODEL_PATH, half=True, imgsz=imgsz, verbose=False
+        )
+        infer_lock.acquire()
+        job_predictor = SAM3SemanticPredictor(overrides=overrides)
         update(status="processing", progress=0)
 
         frame_bytes  = width * height * 3
@@ -273,6 +277,11 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         update(status="failed", error=str(e))
         print(f"[{job_id}] ERROR: {e}")
     finally:
+        if 'job_predictor' in dir() and job_predictor is not None:
+            del job_predictor
+            torch.cuda.empty_cache()
+        if infer_lock.locked():
+            infer_lock.release()
         # Clean up upload
         if os.path.exists(input_path):
             os.remove(input_path)
@@ -302,9 +311,10 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
             jobs[job_id]["resolution"]   = f"{w}x{h}"
             jobs[job_id]["total_frames"] = 1
 
-        job_predictor = predictor
-        job_predictor.overrides["conf"]  = confidence
-        job_predictor.overrides["imgsz"] = imgsz
+        overrides = dict(conf=confidence, task="segment", mode="predict",
+                         model=MODEL_PATH, half=True, imgsz=imgsz, verbose=False)
+        infer_lock.acquire()
+        job_predictor = SAM3SemanticPredictor(overrides=overrides)
         update(status="processing", progress=0)
 
         if tile_size > 0:
@@ -374,6 +384,11 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
         update(status="failed", error=str(e))
         print(f"[{job_id}] ERROR: {e}")
     finally:
+        if 'job_predictor' in dir() and job_predictor is not None:
+            del job_predictor
+            torch.cuda.empty_cache()
+        if infer_lock.locked():
+            infer_lock.release()
         if os.path.exists(input_path):
             os.remove(input_path)
 
