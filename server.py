@@ -1,10 +1,10 @@
-import csv, cv2, io, json, queue, time, threading, zipfile, numpy as np, os, uuid, shutil, subprocess
+import csv, cv2, gc, io, json, queue, time, threading, zipfile, numpy as np, os, uuid, shutil, subprocess
 from fractions import Fraction
 from urllib.parse import quote
 from PIL import Image as PILImage
 from collections import defaultdict
 from datetime import datetime
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:512")
 import torch
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
@@ -38,62 +38,87 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # ── Load SAM3 once at startup ─────────────────────────────────────────────────
 predictor = None
 
+def _purge_predictor(p):
+    """Clear all cached image state from a predictor to free GPU memory."""
+    try:
+        for attr in ("img", "features", "orig_img", "results", "input_size"):
+            if hasattr(p, attr):
+                setattr(p, attr, None)
+        # SAM3SemanticPredictor wraps an inner predictor object
+        inner = getattr(p, "predictor", None)
+        if inner is not None:
+            for attr in ("img", "features", "orig_img", "results", "input_size"):
+                if hasattr(inner, attr):
+                    setattr(inner, attr, None)
+    except Exception:
+        pass
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    gc.collect()
+
+
 def load_model():
+    """Load the single shared SAM3 predictor.
+    Holds infer_lock while loading so no job can start before the model is ready."""
     global predictor
-    print("Loading SAM3...")
-    torch.backends.cudnn.benchmark = True
-    overrides = dict(
-        conf=0.30, task="segment", mode="predict",
-        model=MODEL_PATH, half=True, imgsz=1024, verbose=False
-    )
-    predictor = SAM3SemanticPredictor(overrides=overrides)
-    print("SAM3 ready")
+    infer_lock.acquire()
+    try:
+        print("Loading SAM3...")
+        torch.backends.cudnn.benchmark = True
+        overrides = dict(
+            conf=0.30, task="segment", mode="predict",
+            model=MODEL_PATH, half=True, imgsz=1024, verbose=False
+        )
+        predictor = SAM3SemanticPredictor(overrides=overrides)
+        print("SAM3 ready")
+    finally:
+        infer_lock.release()
 
 # ── Tiled (SAHI-style) inference ──────────────────────────────────────────────
 def tiled_infer(frame, predictor, labels, tile_size=640, overlap=0.25):
-    """Slice frame into overlapping tiles, run predictor on all tiles in one
-    batch, then merge detections back to full-frame coordinates + NMS."""
-    h, w = frame.shape[:2]
-    stride  = int(tile_size * (1 - overlap))
-    tiles, offsets = [], []
+    """Slice frame into overlapping tiles, run predictor one tile at a time
+    (never holds >1 tile result in GPU memory), merge to full-frame coords + NMS."""
+    h, w   = frame.shape[:2]
+    stride = int(tile_size * (1 - overlap))
+
+    all_xyxy, all_conf, all_cls, all_masks = [], [], [], []
+    has_masks = False
 
     for y in range(0, h, stride):
         for x in range(0, w, stride):
             x2, y2 = min(x + tile_size, w), min(y + tile_size, h)
             x1, y1 = max(0, x2 - tile_size),  max(0, y2 - tile_size)
             crop = frame[y1:y2, x1:x2]
-            tiles.append(PILImage.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)))
-            offsets.append((x1, y1))
+            pil  = PILImage.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 
-    batch_results = []
-    for t in tiles:
-        predictor.set_image(t)
-        with torch.amp.autocast("cuda"):
-            r = predictor(text=labels)
-        batch_results.extend(r or [])
-        torch.cuda.empty_cache()
+            predictor.set_image(pil)
+            try:
+                with torch.amp.autocast("cuda"):
+                    r = predictor(text=labels)
+            except torch.cuda.OutOfMemoryError:
+                _purge_predictor(predictor)
+                continue  # skip this tile rather than crash the whole job
 
-    all_xyxy, all_conf, all_cls, all_masks = [], [], [], []
-    has_masks = False
+            # Convert to numpy immediately so GPU tensors are freed
+            if r and r[0].boxes is not None and len(r[0].boxes):
+                dets  = sv.Detections.from_ultralytics(r[0])
+                boxes = dets.xyxy.copy()
+                boxes[:, [0, 2]] += x1
+                boxes[:, [1, 3]] += y1
+                all_xyxy.append(boxes)
+                all_conf.append(dets.confidence)
+                all_cls.append(dets.class_id)
+                if dets.mask is not None:
+                    has_masks = True
+                    full = np.zeros((len(dets.mask), h, w), dtype=bool)
+                    for i, m in enumerate(dets.mask):
+                        ph = min(m.shape[0], h - y1)
+                        pw = min(m.shape[1], w - x1)
+                        full[i, y1:y1 + ph, x1:x1 + pw] = m[:ph, :pw]
+                    all_masks.append(full)
 
-    for result, (ox, oy) in zip(batch_results or [], offsets):
-        if result.boxes is None or len(result.boxes) == 0:
-            continue
-        dets = sv.Detections.from_ultralytics(result)
-        boxes = dets.xyxy.copy()
-        boxes[:, [0, 2]] += ox
-        boxes[:, [1, 3]] += oy
-        all_xyxy.append(boxes)
-        all_conf.append(dets.confidence)
-        all_cls.append(dets.class_id)
-        if dets.mask is not None:
-            has_masks = True
-            full = np.zeros((len(dets.mask), h, w), dtype=bool)
-            for i, m in enumerate(dets.mask):
-                ph = min(m.shape[0], h - oy)
-                pw = min(m.shape[1], w - ox)
-                full[i, oy:oy + ph, ox:ox + pw] = m[:ph, :pw]
-            all_masks.append(full)
+            del r, pil, crop
+            torch.cuda.empty_cache()
 
     if not all_xyxy:
         return sv.Detections.empty()
@@ -189,12 +214,12 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         t_start          = time.time()
         detection_counts = defaultdict(int)
 
-        overrides = dict(
-            conf=confidence, task="segment", mode="predict",
-            model=MODEL_PATH, half=True, imgsz=imgsz, verbose=False
-        )
+        # Acquire the lock then reuse the single shared predictor.
+        # infer_lock also guarantees the model is loaded (load_model holds it during startup).
         infer_lock.acquire()
-        job_predictor = SAM3SemanticPredictor(overrides=overrides)
+        job_predictor = predictor
+        job_predictor.args.conf  = confidence
+        job_predictor.args.imgsz = imgsz
         update(status="processing", progress=0)
 
         frame_bytes  = width * height * 3
@@ -213,13 +238,24 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
                 else:
                     pil = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                     job_predictor.set_image(pil)
-                    with torch.amp.autocast("cuda"):
-                        results = job_predictor(text=labels)
+                    try:
+                        with torch.amp.autocast("cuda"):
+                            results = job_predictor(text=labels)
+                    except torch.cuda.OutOfMemoryError:
+                        _purge_predictor(job_predictor)
+                        # Retry at half resolution
+                        job_predictor.args.imgsz = max(640, imgsz // 2)
+                        job_predictor.set_image(pil)
+                        with torch.amp.autocast("cuda"):
+                            results = job_predictor(text=labels)
+                        job_predictor.args.imgsz = imgsz
+                        print(f"[{job_id}] OOM — retried at imgsz={max(640, imgsz // 2)}")
                     if results and results[0].boxes is not None and len(results[0].boxes):
                         last_sv_dets = sv.Detections.from_ultralytics(results[0])
                     else:
                         last_sv_dets = sv.Detections.empty()
-                torch.cuda.empty_cache()
+                    del results
+                _purge_predictor(job_predictor)
 
             tracked     = tracker.update_with_detections(last_sv_dets)
             label_texts = []
@@ -282,11 +318,9 @@ def process_video(job_id: str, input_path: str, labels: list, confidence: float,
         print(f"[{job_id}] ERROR: {e}")
     finally:
         if 'job_predictor' in dir() and job_predictor is not None:
-            del job_predictor
-            torch.cuda.empty_cache()
+            _purge_predictor(job_predictor)   # clear cached image state; don't delete (shared)
         if infer_lock.locked():
             infer_lock.release()
-        # Clean up upload
         if os.path.exists(input_path):
             os.remove(input_path)
 
@@ -315,10 +349,10 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
             jobs[job_id]["resolution"]   = f"{w}x{h}"
             jobs[job_id]["total_frames"] = 1
 
-        overrides = dict(conf=confidence, task="segment", mode="predict",
-                         model=MODEL_PATH, half=True, imgsz=imgsz, verbose=False)
         infer_lock.acquire()
-        job_predictor = SAM3SemanticPredictor(overrides=overrides)
+        job_predictor = predictor
+        job_predictor.args.conf  = confidence
+        job_predictor.args.imgsz = imgsz
         update(status="processing", progress=0)
 
         if tile_size > 0:
@@ -326,13 +360,23 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
         else:
             pil = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             job_predictor.set_image(pil)
-            with torch.amp.autocast("cuda"):
-                results = job_predictor(text=labels)
+            try:
+                with torch.amp.autocast("cuda"):
+                    results = job_predictor(text=labels)
+            except torch.cuda.OutOfMemoryError:
+                _purge_predictor(job_predictor)
+                job_predictor.args.imgsz = max(640, imgsz // 2)
+                job_predictor.set_image(pil)
+                with torch.amp.autocast("cuda"):
+                    results = job_predictor(text=labels)
+                job_predictor.args.imgsz = imgsz
+                print(f"[{job_id}] OOM — retried at imgsz={max(640, imgsz // 2)}")
             if results and results[0].boxes is not None and len(results[0].boxes):
                 dets = sv.Detections.from_ultralytics(results[0])
             else:
                 dets = sv.Detections.empty()
-        torch.cuda.empty_cache()
+            del results
+        _purge_predictor(job_predictor)
 
         color_palette = sv.ColorPalette(colors=[
             sv.Color.from_hex((label_colors or {}).get(lbl, "#00c864"))
@@ -389,8 +433,7 @@ def process_image(job_id: str, input_path: str, labels: list, confidence: float,
         print(f"[{job_id}] ERROR: {e}")
     finally:
         if 'job_predictor' in dir() and job_predictor is not None:
-            del job_predictor
-            torch.cuda.empty_cache()
+            _purge_predictor(job_predictor)
         if infer_lock.locked():
             infer_lock.release()
         if os.path.exists(input_path):
