@@ -1,4 +1,4 @@
-import csv, cv2, json, queue, time, threading, numpy as np, os, uuid, shutil, subprocess
+import csv, cv2, io, json, queue, time, threading, zipfile, numpy as np, os, uuid, shutil, subprocess
 from fractions import Fraction
 from urllib.parse import quote
 from PIL import Image as PILImage
@@ -7,7 +7,7 @@ from datetime import datetime
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
@@ -27,6 +27,10 @@ jobs      = {}
 jobs_lock = threading.Lock()
 # Ensures only one job runs inference at a time (GPU memory is not shared)
 infer_lock = threading.Lock()
+
+# ── Batch store ────────────────────────────────────────────────────────────────
+batches      = {}
+batches_lock = threading.Lock()
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -530,6 +534,132 @@ def delete_job(job_id: str):
             if p and os.path.exists(p):
                 os.remove(p)
     return {"status": "deleted"}
+
+
+@app.post("/process_batch")
+async def process_batch(
+    files:        List[UploadFile] = File(...),
+    labels:       str   = Form(...),
+    confidence:   float = Form(0.30),
+    every_n:      int   = Form(5),
+    imgsz:        int   = Form(1024),
+    batch_size:   int   = Form(4),
+    tile_size:    int   = Form(0),
+    label_colors: str   = Form("{}"),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+    label_list = [l.strip().lower() for l in labels.split(",") if l.strip()]
+    if not label_list:
+        raise HTTPException(status_code=400, detail="Provide at least one label.")
+    try:
+        colors_map = json.loads(label_colors)
+    except Exception:
+        colors_map = {}
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    batch_id = str(uuid.uuid4())[:8]
+    job_ids  = []
+
+    for file in files:
+        fname = file.filename.lower()
+        if not (any(fname.endswith(e) for e in VIDEO_EXTS) or any(fname.endswith(e) for e in IMAGE_EXTS)):
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
+
+        contents = await file.read()
+        size_mb  = len(contents) / 1e6
+        if size_mb > MAX_FILE_MB:
+            raise HTTPException(status_code=413, detail=f"{file.filename} too large. Max {MAX_FILE_MB}MB.")
+
+        job_id     = str(uuid.uuid4())[:8]
+        input_path = f"{UPLOAD_DIR}/{job_id}_{file.filename}"
+        with open(input_path, "wb") as fh:
+            fh.write(contents)
+
+        is_image = any(fname.endswith(e) for e in IMAGE_EXTS)
+        with jobs_lock:
+            jobs[job_id] = {
+                "status":           "queued",
+                "progress":         0,
+                "total_frames":     0,
+                "frames_done":      0,
+                "fps":              0,
+                "proc_fps":         0,
+                "resolution":       "",
+                "eta_seconds":      0,
+                "size_mb":          0,
+                "error":            None,
+                "output_path":      None,
+                "csv_path":         None,
+                "detection_counts": {},
+                "output_type":      "image" if is_image else "video",
+                "filename":         file.filename,
+                "labels":           label_list,
+                "batch_id":         batch_id,
+            }
+
+        if is_image:
+            t = threading.Thread(
+                target=process_image,
+                args=(job_id, input_path, label_list, confidence, imgsz, tile_size, colors_map),
+                daemon=True
+            )
+        else:
+            t = threading.Thread(
+                target=process_video,
+                args=(job_id, input_path, label_list, confidence, every_n, imgsz, batch_size, tile_size, colors_map),
+                daemon=True
+            )
+        t.start()
+        job_ids.append(job_id)
+
+    with batches_lock:
+        batches[batch_id] = {"job_ids": job_ids}
+
+    return JSONResponse({"batch_id": batch_id, "job_ids": job_ids})
+
+
+@app.get("/batch/{batch_id}")
+def batch_status_endpoint(batch_id: str):
+    with batches_lock:
+        batch = batches.get(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    with jobs_lock:
+        jobs_data = [{**jobs[jid], "job_id": jid} for jid in batch["job_ids"] if jid in jobs]
+    return JSONResponse({"batch_id": batch_id, "jobs": jobs_data})
+
+
+@app.get("/download_batch/{batch_id}")
+def download_batch(batch_id: str):
+    with batches_lock:
+        batch = batches.get(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    with jobs_lock:
+        batch_jobs = [{**jobs[jid], "job_id": jid} for jid in batch["job_ids"] if jid in jobs]
+
+    done_jobs = [j for j in batch_jobs if j["status"] == "done"]
+    if not done_jobs:
+        raise HTTPException(status_code=400, detail="No completed jobs to download.")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for job in done_jobs:
+            base     = os.path.splitext(job["filename"])[0]
+            out_path = job.get("output_path")
+            csv_path = job.get("csv_path")
+            ext      = ".jpg" if job.get("output_type") == "image" else ".mp4"
+            if out_path and os.path.exists(out_path):
+                zf.write(out_path, f"{base}_detected{ext}")
+            if csv_path and os.path.exists(csv_path):
+                zf.write(csv_path, f"{base}_detections.csv")
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=batch_{batch_id}_results.zip"},
+    )
 
 
 @app.get("/health")

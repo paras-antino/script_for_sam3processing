@@ -44,7 +44,20 @@
   .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
   .dropzone svg { width: 36px; height: 36px; color: #fff; margin-bottom: 10px; }
   .dropzone p   { font-size: 0.78rem; color: #fff; }
-  .dropzone .file-name { color: #00c864; font-size: 0.82rem; margin-top: 8px; }
+
+  .file-list {
+    margin-top: 10px; display: flex; flex-direction: column; gap: 4px;
+    max-height: 140px; overflow-y: auto;
+  }
+  .file-list-item {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.72rem; color: #00c864;
+    background: #0a1a0a; border-radius: 3px; padding: 3px 8px;
+  }
+  .file-list-item .file-size { color: #666; margin-left: auto; flex-shrink: 0; }
+  .file-list-count {
+    font-size: 0.68rem; color: #666; margin-top: 4px; text-align: center;
+  }
 
   /* Tags */
   .tags-wrapper {
@@ -56,7 +69,7 @@
   .tag {
     border-radius: 3px; padding: 2px 8px; font-size: 0.72rem;
     display: flex; align-items: center; gap: 5px;
-    border: 1px solid; /* color set inline */
+    border: 1px solid;
   }
   .tag button { background: none; border: none; cursor: pointer; font-size: 0.8rem; opacity: 0.6; }
   .tag button:hover { opacity: 1; }
@@ -86,80 +99,74 @@
   .btn:active { transform: scale(0.98); }
   .btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
-  /* Progress section */
-  #progress-section { display: none; flex-direction: column; gap: 14px; }
-
-  .progress-header { display: flex; justify-content: space-between; align-items: center; }
-  .progress-label  { font-size: 0.72rem; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
-  .progress-pct    { font-size: 1rem; font-weight: bold; color: #00c864; }
-
-  .progress-track {
-    height: 6px; background: #1a1a1a; border-radius: 4px; overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%; background: #00c864; border-radius: 4px;
-    transition: width 0.4s ease; width: 0%;
-  }
-
-  .progress-meta {
-    display: flex; gap: 16px; flex-wrap: wrap;
-  }
-  .pmeta {
-    font-size: 0.68rem; color: #fff;
-    display: flex; flex-direction: column; gap: 2px;
-  }
-  .pmeta span { color: #fff; font-size: 0.82rem; }
-
-  /* Status states */
-  .status-row { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; flex-shrink: 0; }
-  .status-dot.processing { background: #00c864; animation: pulse 1.2s infinite; }
-  .status-dot.done       { background: #00c864; }
-  .status-dot.failed     { background: #e05555; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-
+  /* Error */
   #error-box {
     font-size: 0.75rem; color: #e05555;
     background: #1a0a0a; border: 1px solid #3a1a1a;
     border-radius: 4px; padding: 10px; display: none;
   }
 
-  /* Download buttons */
-  .dl-btn {
+  /* ── Batch progress ────────────────────────────────────────────────────── */
+  #batch-section { display: none; flex-direction: column; gap: 14px; }
+
+  .batch-overall-header {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
+  }
+  .progress-label  { font-size: 0.72rem; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
+  .progress-pct    { font-size: 1rem; font-weight: bold; color: #00c864; }
+  .progress-track  { height: 6px; background: #1a1a1a; border-radius: 4px; overflow: hidden; }
+  .progress-fill   { height: 100%; background: #00c864; border-radius: 4px; transition: width 0.4s ease; width: 0%; }
+
+  #batch-summary { font-size: 0.68rem; color: #666; margin-top: 6px; }
+
+  /* Per-file rows */
+  .batch-list { display: flex; flex-direction: column; gap: 8px; }
+  .batch-item {
+    background: #0d0d0d; border: 1px solid #222;
+    border-radius: 6px; padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .batch-item-header { display: flex; align-items: center; gap: 8px; }
+  .batch-item-name {
+    flex: 1; font-size: 0.75rem; color: #e0e0e0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .batch-item-pct { font-size: 0.72rem; color: #00c864; min-width: 42px; text-align: right; flex-shrink: 0; }
+  .batch-item-track { height: 3px; background: #1a1a1a; border-radius: 2px; overflow: hidden; }
+  .batch-item-fill  { height: 100%; background: #00c864; border-radius: 2px; transition: width 0.4s; width: 0%; }
+  .batch-item-fill.failed { background: #e05555; }
+  .batch-item-meta  { font-size: 0.65rem; color: #555; display: flex; gap: 12px; flex-wrap: wrap; }
+  .batch-item-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+  .mini-dl-btn {
+    font-size: 0.65rem; padding: 3px 10px; border-radius: 3px;
+    cursor: pointer; border: 1px solid; font-family: inherit;
+    background: none; transition: background 0.15s; letter-spacing: 0.5px;
+  }
+  .mini-dl-btn:hover { opacity: 0.8; }
+
+  /* Status dot */
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; flex-shrink: 0; }
+  .status-dot.processing { background: #00c864; animation: pulse 1.2s infinite; }
+  .status-dot.done       { background: #00c864; }
+  .status-dot.failed     { background: #e05555; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* Download all button */
+  #download-all-btn {
     display: none; width: 100%; padding: 13px;
     border-radius: 6px; font-family: inherit; font-size: 0.88rem;
     font-weight: bold; letter-spacing: 1px; cursor: pointer;
+    background: #1a1a2e; border: 1px solid #6495ed; color: #6495ed;
     transition: background 0.2s;
   }
-  #download-btn {
-    background: #1a1a2e; border: 1px solid #6495ed; color: #6495ed;
-  }
-  #download-btn:hover { background: #1e1e3a; }
-  #download-csv-btn {
-    background: #1a2a1a; border: 1px solid #00c864; color: #00c864;
-  }
-  #download-csv-btn:hover { background: #1a3a1a; }
+  #download-all-btn:hover { background: #1e1e3a; }
 
-  /* Results summary */
-  #results-section {
-    display: none; flex-direction: column; gap: 10px;
+  /* Reset link */
+  #reset-btn {
+    text-align: center; font-size: 0.72rem; color: #fff;
+    cursor: pointer; display: none;
   }
-  .results-grid {
-    display: flex; flex-wrap: wrap; gap: 8px;
-  }
-  .result-chip {
-    background: #111; border: 1px solid #222;
-    border-radius: 4px; padding: 6px 12px;
-    font-size: 0.75rem; color: #fff;
-    display: flex; gap: 8px; align-items: center;
-  }
-  .result-chip .chip-count { font-size: 0.9rem; font-weight: bold; }
-
-  /* Result image preview */
-  #result-image {
-    display: none; width: 100%; border-radius: 6px;
-    border: 1px solid #1e1e1e; margin-top: 4px;
-  }
+  #reset-btn:hover { color: #ccc; }
 
   /* GPU panel */
   .gpu-panel {
@@ -184,13 +191,6 @@
   .bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; background: #00c864; }
   .bar-fill.warn { background: #f0a020; }
   .bar-fill.crit { background: #e05555; }
-
-  /* Reset link */
-  #reset-btn {
-    text-align: center; font-size: 0.72rem; color: #fff;
-    cursor: pointer; display: none;
-  }
-  #reset-btn:hover { color: #ccc; }
 </style>
 </head>
 <body>
@@ -201,22 +201,24 @@
 <div class="card">
   <div class="section-title">Upload & Configure</div>
 
-  <!-- Drop zone -->
+  <!-- Drop zone (multiple files) -->
   <div>
-    <label>Video File</label>
+    <label>Files <span style="color:#555;text-transform:none;letter-spacing:0;font-size:0.65rem">(select multiple)</span></label>
     <div class="dropzone" id="dropzone">
-      <input type="file" id="file-input" accept=".mp4,.avi,.mov,.mkv,.webm,.jpg,.jpeg,.png,.bmp,.webp,.tiff"
+      <input type="file" id="file-input" multiple
+             accept=".mp4,.avi,.mov,.mkv,.webm,.jpg,.jpeg,.png,.bmp,.webp,.tiff"
              onchange="onFileSelect(this)"/>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
         <polyline points="16 12 12 8 8 12"/>
         <line x1="12" y1="8" x2="12" y2="20"/>
       </svg>
-      <p>Drop video here or click to browse</p>
-      <p>Video: MP4 · AVI · MOV · MKV · WEBM — max 500MB</p>
+      <p>Drop files here or click to browse</p>
+      <p>Video: MP4 · AVI · MOV · MKV · WEBM — max 500 MB each</p>
       <p>Image: JPG · PNG · BMP · WEBP · TIFF</p>
-      <div class="file-name" id="file-name"></div>
     </div>
+    <div class="file-list" id="file-list"></div>
+    <div class="file-list-count" id="file-list-count"></div>
   </div>
 
   <!-- Labels -->
@@ -262,7 +264,7 @@
   <!-- Batch size -->
   <div class="video-only">
     <div class="slider-row">
-      <label style="margin:0">Batch Size <span style="color:#fff;font-size:.65rem">(frames per GPU call — higher = faster, more VRAM)</span></label>
+      <label style="margin:0">Batch Size <span style="color:#fff;font-size:.65rem">(frames per GPU call)</span></label>
       <span class="slider-val" id="batch-val">4</span>
     </div>
     <input type="range" id="batch-size" min="1" max="16" step="1" value="4"
@@ -293,51 +295,33 @@
   <div id="error-box"></div>
 
   <!-- Submit -->
-  <button class="btn" id="submit-btn" onclick="submitJob()">⚡ PROCESS VIDEO</button>
+  <button class="btn" id="submit-btn" onclick="submitBatch()">⚡ PROCESS FILES</button>
 
-  <!-- Progress -->
-  <div id="progress-section">
-    <div class="section-title">Processing</div>
+  <!-- Batch progress section -->
+  <div id="batch-section">
+    <div class="section-title">Batch Progress</div>
 
-    <div class="status-row">
-      <div class="status-dot" id="status-dot"></div>
-      <span id="status-text">Queued...</span>
-    </div>
-
+    <!-- Overall bar -->
     <div>
-      <div class="progress-header">
-        <span class="progress-label">Progress</span>
-        <span class="progress-pct" id="progress-pct">0%</span>
+      <div class="batch-overall-header">
+        <span class="progress-label">Overall</span>
+        <span class="progress-pct" id="overall-pct">0%</span>
       </div>
       <div class="progress-track">
-        <div class="progress-fill" id="progress-fill"></div>
+        <div class="progress-fill" id="overall-fill"></div>
       </div>
+      <div id="batch-summary"></div>
     </div>
 
-    <div class="progress-meta">
-      <div class="pmeta">Frames<span id="m-frames">—</span></div>
-      <div class="pmeta">Resolution<span id="m-res">—</span></div>
-      <div class="pmeta">Proc FPS<span id="m-pfps">—</span></div>
-      <div class="pmeta">ETA<span id="m-eta">—</span></div>
-    </div>
+    <!-- Per-file list -->
+    <div class="batch-list" id="batch-list"></div>
   </div>
 
-  <!-- Image result preview -->
-  <img id="result-image" alt="Detection result"/>
-
-  <!-- Results summary -->
-  <div id="results-section">
-    <div class="section-title">Detection Results</div>
-    <div class="results-grid" id="results-grid"></div>
-  </div>
-
-  <!-- Download -->
-  <button id="download-btn"     class="dl-btn" onclick="downloadVideo()">⬇ DOWNLOAD PROCESSED VIDEO</button>
-  <button id="download-csv-btn" class="dl-btn" onclick="downloadCSV()">⬇ DOWNLOAD DETECTIONS CSV</button>
+  <!-- Download all -->
+  <button id="download-all-btn" onclick="downloadAll()">⬇ DOWNLOAD ALL (ZIP)</button>
 
   <!-- Reset -->
-  <div id="reset-btn" onclick="resetUI()">↺ Process another video</div>
-
+  <div id="reset-btn" onclick="resetUI()">↺ Process more files</div>
 </div>
 
 <div class="gpu-panel">
@@ -353,24 +337,38 @@
   dropzone.addEventListener('drop', e => {
     e.preventDefault();
     dropzone.classList.remove('dragover');
-    const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    if (e.dataTransfer.files.length) setFiles(Array.from(e.dataTransfer.files));
   });
 
   const IMAGE_EXTS = ['.jpg','.jpeg','.png','.bmp','.webp','.tiff','.tif'];
-  let selectedFile = null;
-  let isImage = false;
+  let selectedFiles = [];
 
   function onFileSelect(input) {
-    if (input.files[0]) setFile(input.files[0]);
+    if (input.files.length) setFiles(Array.from(input.files));
   }
-  function setFile(f) {
-    selectedFile = f;
-    isImage = IMAGE_EXTS.some(e => f.name.toLowerCase().endsWith(e));
-    document.getElementById('file-name').textContent = `✓ ${f.name}  (${(f.size/1e6).toFixed(1)} MB)`;
-    // Hide video-only controls for images
-    const videoOnly = ['every-n', 'batch-size'].map(id => document.getElementById(id)?.closest('div.card > div'));
-    document.querySelectorAll('.video-only').forEach(el => el.style.display = isImage ? 'none' : '');
+
+  function setFiles(files) {
+    selectedFiles = files;
+    const listEl  = document.getElementById('file-list');
+    const countEl = document.getElementById('file-list-count');
+    listEl.innerHTML = '';
+
+    const showMax = 8;
+    files.slice(0, showMax).forEach(f => {
+      const item = document.createElement('div');
+      item.className = 'file-list-item';
+      const isImg = IMAGE_EXTS.some(e => f.name.toLowerCase().endsWith(e));
+      item.innerHTML = `<span>${isImg ? '🖼' : '🎬'}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</span><span class="file-size">${(f.size/1e6).toFixed(1)} MB</span>`;
+      listEl.appendChild(item);
+    });
+    if (files.length > showMax)
+      countEl.textContent = `+${files.length - showMax} more file${files.length - showMax > 1 ? 's' : ''}`;
+    else
+      countEl.textContent = `${files.length} file${files.length !== 1 ? 's' : ''} selected`;
+
+    // Show/hide video-only controls based on whether ANY selected file is a video
+    const hasVideo = files.some(f => !IMAGE_EXTS.some(e => f.name.toLowerCase().endsWith(e)));
+    document.querySelectorAll('.video-only').forEach(el => el.style.display = hasVideo ? '' : 'none');
   }
 
   // ── Color palette ──────────────────────────────────────────────────────────
@@ -379,15 +377,13 @@
     '#22d3ee','#fb7185','#34d399','#fbbf24','#c084fc',
     '#38bdf8','#f97316','#4ade80','#e879f9','#60a5fa',
   ];
-  // label → color; persists across remove/re-add so the same label always gets the same color
   const labelColors = {};
   let paletteIdx = 0;
 
   function getColor(label) {
     if (!labelColors[label]) {
-      // find next palette slot not currently assigned to an active label
       const active = new Set(Object.values(labelColors));
-      let chosen = PALETTE[paletteIdx % PALETTE.length]; // fallback (all used)
+      let chosen = PALETTE[paletteIdx % PALETTE.length];
       for (let i = 0; i < PALETTE.length; i++) {
         const c = PALETTE[(paletteIdx + i) % PALETTE.length];
         if (!active.has(c)) { chosen = c; paletteIdx = (PALETTE.indexOf(c) + 1) % PALETTE.length; break; }
@@ -414,11 +410,10 @@
   function addTag(v) {
     if (!v || tags.includes(v)) return;
     tags.push(v);
-    getColor(v); // assign color now so it's stable
+    getColor(v);
     renderTags();
   }
   function removeTag(v) {
-    // keep labelColors[v] so re-adding the same label gets the same color
     tags = tags.filter(t => t !== v);
     renderTags();
   }
@@ -426,7 +421,7 @@
     const wrapper = document.getElementById('tags-wrapper');
     wrapper.querySelectorAll('.tag').forEach(el => el.remove());
     tags.forEach(t => {
-      const c = getColor(t);
+      const c  = getColor(t);
       const el = document.createElement('div');
       el.className = 'tag';
       el.style.cssText = `border-color:${c};color:${c};background:${c}1a`;
@@ -434,7 +429,7 @@
       swatch.className = 'color-swatch';
       swatch.style.background = c;
       const text = document.createTextNode(t);
-      const btn = document.createElement('button');
+      const btn  = document.createElement('button');
       btn.textContent = '×';
       btn.style.color = c;
       btn.addEventListener('click', e => { e.stopPropagation(); removeTag(t); });
@@ -444,23 +439,24 @@
   }
 
   // ── Submit ─────────────────────────────────────────────────────────────────
-  let currentJobId = null;
-  let pollTimer    = null;
+  let currentBatchId = null;
+  let currentJobs    = [];   // [{job_id, filename, output_type}]
+  let pollTimer      = null;
 
-  async function submitJob() {
-    if (!selectedFile)  { showError('Please select a video file.'); return; }
-    if (!tags.length)   { showError('Add at least one detection label.'); return; }
+  async function submitBatch() {
+    if (!selectedFiles.length) { showError('Please select at least one file.'); return; }
+    if (!tags.length)           { showError('Add at least one detection label.'); return; }
     hideError();
 
-    const conf   = parseFloat(document.getElementById('confidence').value);
-    const everyN = parseInt(document.getElementById('every-n').value);
+    const conf      = parseFloat(document.getElementById('confidence').value);
+    const everyN    = parseInt(document.getElementById('every-n').value);
     const imgsz     = parseInt(document.getElementById('imgsz').value);
     const batchSize = parseInt(document.getElementById('batch-size').value);
     const tileEnabled = document.getElementById('tile-enable').checked;
     const tileSize  = tileEnabled ? parseInt(document.getElementById('tile-size').value) : 0;
 
     const fd = new FormData();
-    fd.append('file',         selectedFile);
+    selectedFiles.forEach(f => fd.append('files', f));
     fd.append('labels',       tags.join(','));
     fd.append('confidence',   conf);
     fd.append('every_n',      everyN);
@@ -470,110 +466,147 @@
     fd.append('label_colors', JSON.stringify(Object.fromEntries(tags.map(t => [t, getColor(t)]))));
 
     document.getElementById('submit-btn').disabled = true;
-    document.getElementById('progress-section').style.display = 'flex';
-    setStatus('queued');
 
     try {
-      const res  = await fetch('/process', { method: 'POST', body: fd });
+      const res  = await fetch('/process_batch', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) { showError(data.detail || 'Upload failed.'); resetSubmitBtn(); return; }
-      currentJobId = data.job_id;
+
+      currentBatchId = data.batch_id;
+      currentJobs    = data.job_ids.map((jid, i) => ({
+        job_id:      jid,
+        filename:    selectedFiles[i]?.name || jid,
+      }));
+
+      buildBatchUI();
+      document.getElementById('batch-section').style.display = 'flex';
       startPolling();
+
     } catch(e) {
       showError('Could not reach server.');
       resetSubmitBtn();
     }
   }
 
+  function buildBatchUI() {
+    const list = document.getElementById('batch-list');
+    list.innerHTML = '';
+    currentJobs.forEach(({ job_id, filename }) => {
+      const div = document.createElement('div');
+      div.className = 'batch-item';
+      div.id = `item-${job_id}`;
+      div.innerHTML = `
+        <div class="batch-item-header">
+          <div class="status-dot" id="dot-${job_id}"></div>
+          <div class="batch-item-name" title="${filename}">${filename}</div>
+          <div class="batch-item-pct" id="pct-${job_id}">0%</div>
+        </div>
+        <div class="batch-item-track">
+          <div class="batch-item-fill" id="fill-${job_id}"></div>
+        </div>
+        <div class="batch-item-meta" id="meta-${job_id}"></div>
+        <div class="batch-item-actions" id="actions-${job_id}" style="display:none"></div>`;
+      list.appendChild(div);
+    });
+  }
+
   function startPolling() {
     pollTimer = setInterval(async () => {
       try {
-        const d = await (await fetch(`/job/${currentJobId}`)).json();
+        const d = await (await fetch(`/batch/${currentBatchId}`)).json();
+        let totalPct = 0, doneCount = 0, failCount = 0;
 
-        // Update progress bar
-        document.getElementById('progress-pct').textContent  = d.progress.toFixed(1) + '%';
-        document.getElementById('progress-fill').style.width = d.progress + '%';
+        d.jobs.forEach(job => {
+          const jid = job.job_id;
+          totalPct += job.progress || 0;
 
-        // Meta
-        if (d.total_frames)
-          document.getElementById('m-frames').textContent =
-            `${d.frames_done} / ${d.total_frames}`;
-        if (d.resolution)
-          document.getElementById('m-res').textContent = d.resolution;
-        if (d.proc_fps)
-          document.getElementById('m-pfps').textContent = d.proc_fps + ' fps';
-        if (d.eta_seconds !== undefined)
-          document.getElementById('m-eta').textContent =
-            d.eta_seconds > 0 ? formatETA(d.eta_seconds) : '—';
-
-        setStatus(d.status);
-
-        if (d.status === 'done') {
-          clearInterval(pollTimer);
-          document.getElementById('download-btn').style.display     = 'block';
-          document.getElementById('download-csv-btn').style.display = 'block';
-          document.getElementById('reset-btn').style.display        = 'block';
-          showResults(d.detection_counts);
-          if (d.output_type === 'image') {
-            const img = document.getElementById('result-image');
-            img.src = `/download/${currentJobId}?t=${Date.now()}`;
-            img.style.display = 'block';
+          // Status dot
+          const dot = document.getElementById(`dot-${jid}`);
+          if (dot) {
+            dot.className = 'status-dot';
+            if (job.status === 'processing') dot.classList.add('processing');
+            else if (job.status === 'done')  dot.classList.add('done');
+            else if (job.status === 'failed') dot.classList.add('failed');
           }
-        } else if (d.status === 'failed') {
+
+          // Progress bar
+          const fill = document.getElementById(`fill-${jid}`);
+          const pct  = document.getElementById(`pct-${jid}`);
+          if (fill) {
+            fill.style.width = (job.progress || 0) + '%';
+            if (job.status === 'failed') fill.classList.add('failed');
+          }
+          if (pct) pct.textContent = (job.progress || 0).toFixed(1) + '%';
+
+          // Meta (resolution, fps, eta)
+          const meta = document.getElementById(`meta-${jid}`);
+          if (meta) {
+            const parts = [];
+            if (job.resolution) parts.push(job.resolution);
+            if (job.proc_fps)   parts.push(job.proc_fps + ' fps');
+            if (job.eta_seconds > 0) parts.push('ETA ' + formatETA(job.eta_seconds));
+            if (job.size_mb)    parts.push(job.size_mb + ' MB');
+            if (job.status === 'failed' && job.error) parts.push('⚠ ' + job.error);
+            meta.textContent = parts.join(' · ');
+          }
+
+          if (job.status === 'done') {
+            doneCount++;
+            // Show per-file download buttons
+            const actions = document.getElementById(`actions-${jid}`);
+            if (actions && actions.style.display === 'none') {
+              actions.style.display = 'flex';
+              const isImg = job.output_type === 'image';
+              const outBtn = document.createElement('button');
+              outBtn.className = 'mini-dl-btn';
+              outBtn.style.cssText = 'border-color:#6495ed;color:#6495ed';
+              outBtn.textContent = `⬇ ${isImg ? 'Image' : 'Video'}`;
+              outBtn.onclick = () => window.location.href = `/download/${jid}`;
+              const csvBtn = document.createElement('button');
+              csvBtn.className = 'mini-dl-btn';
+              csvBtn.style.cssText = 'border-color:#00c864;color:#00c864';
+              csvBtn.textContent = '⬇ CSV';
+              csvBtn.onclick = () => window.location.href = `/download_csv/${jid}`;
+              actions.append(outBtn, csvBtn);
+            }
+          } else if (job.status === 'failed') {
+            failCount++;
+          }
+        });
+
+        // Overall progress
+        const n = d.jobs.length || 1;
+        const avgPct = totalPct / n;
+        document.getElementById('overall-pct').textContent  = avgPct.toFixed(1) + '%';
+        document.getElementById('overall-fill').style.width = avgPct + '%';
+        document.getElementById('batch-summary').textContent =
+          `${doneCount} / ${d.jobs.length} complete${failCount ? ` · ${failCount} failed` : ''}`;
+
+        // All finished?
+        const allFinished = d.jobs.every(j => j.status === 'done' || j.status === 'failed');
+        if (allFinished) {
           clearInterval(pollTimer);
-          showError(d.error || 'Processing failed.');
-          resetSubmitBtn();
+          if (doneCount > 0) {
+            document.getElementById('download-all-btn').style.display = 'block';
+          }
+          document.getElementById('reset-btn').style.display = 'block';
         }
 
       } catch(e) {}
     }, 1500);
   }
 
+  function downloadAll() {
+    if (currentBatchId) window.location.href = `/download_batch/${currentBatchId}`;
+  }
+
   function onTileToggle(cb) {
     document.getElementById('tile-opts').style.display = cb.checked ? 'block' : 'none';
   }
 
-  function downloadVideo() {
-    if (currentJobId) window.location.href = `/download/${currentJobId}`;
-  }
-  function downloadCSV() {
-    if (currentJobId) window.location.href = `/download_csv/${currentJobId}`;
-  }
-
-  function showResults(counts) {
-    if (!counts || !Object.keys(counts).length) return;
-    const section = document.getElementById('results-section');
-    const grid    = document.getElementById('results-grid');
-    grid.innerHTML = '';
-    for (const [label, count] of Object.entries(counts).sort((a,b) => b[1]-a[1])) {
-      const c = getColor(label);
-      const chip = document.createElement('div');
-      chip.className = 'result-chip';
-      chip.style.cssText = `border-color:${c}44`;
-      chip.innerHTML = `<span class="color-swatch" style="background:${c}"></span>${label} <span class="chip-count" style="color:${c}">${count.toLocaleString()}</span>`;
-      grid.appendChild(chip);
-    }
-    section.style.display = 'flex';
-  }
-
   // ── Helpers ────────────────────────────────────────────────────────────────
-  function setStatus(s) {
-    const dot = document.getElementById('status-dot');
-    const txt = document.getElementById('status-text');
-    dot.className = 'status-dot';
-    const map = {
-      queued:     ['', 'Queued — waiting for model...'],
-      processing: ['processing', 'Processing...'],
-      done:       ['done', 'Done ✓'],
-      failed:     ['failed', 'Failed'],
-    };
-    const [cls, label] = map[s] || ['', s];
-    if (cls) dot.classList.add(cls);
-    txt.textContent = label;
-  }
-
   function formatETA(s) {
-    if (s < 60)  return `${s}s`;
+    if (s < 60)   return `${s}s`;
     if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`;
     return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
   }
@@ -589,29 +622,30 @@
   }
 
   function resetUI() {
-    selectedFile = null;
-    tags         = [];
-    currentJobId = null;
+    selectedFiles = [];
+    tags          = [];
+    currentBatchId = null;
+    currentJobs    = [];
     Object.keys(labelColors).forEach(k => delete labelColors[k]);
     paletteIdx = 0;
     if (pollTimer) clearInterval(pollTimer);
-    document.getElementById('file-name').textContent           = '';
-    document.getElementById('file-input').value                = '';
+
+    document.getElementById('file-list').innerHTML               = '';
+    document.getElementById('file-list-count').textContent       = '';
+    document.getElementById('file-input').value                  = '';
     document.getElementById('tags-wrapper').querySelectorAll('.tag').forEach(e => e.remove());
-    document.getElementById('progress-section').style.display      = 'none';
-    document.getElementById('results-section').style.display        = 'none';
-    document.getElementById('download-btn').style.display           = 'none';
-    document.getElementById('download-csv-btn').style.display       = 'none';
-    document.getElementById('reset-btn').style.display              = 'none';
-    document.getElementById('results-grid').innerHTML               = '';
-    document.getElementById('result-image').style.display           = 'none';
-    document.getElementById('result-image').src                     = '';
+    document.getElementById('batch-section').style.display       = 'none';
+    document.getElementById('batch-list').innerHTML              = '';
+    document.getElementById('download-all-btn').style.display    = 'none';
+    document.getElementById('reset-btn').style.display           = 'none';
+    document.getElementById('overall-fill').style.width          = '0%';
+    document.getElementById('overall-pct').textContent           = '0%';
+    document.getElementById('batch-summary').textContent         = '';
     document.querySelectorAll('.video-only').forEach(el => el.style.display = '');
-    document.getElementById('progress-fill').style.width       = '0%';
-    document.getElementById('progress-pct').textContent        = '0%';
-    document.getElementById('submit-btn').disabled             = false;
+    document.getElementById('submit-btn').disabled               = false;
     hideError();
   }
+
   // ── GPU monitor ────────────────────────────────────────────────────────────
   async function refreshGPU() {
     try {
