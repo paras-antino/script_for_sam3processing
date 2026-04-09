@@ -474,7 +474,7 @@ async def process(
     # Save upload
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     job_id     = str(uuid.uuid4())[:8]
-    input_path = f"{UPLOAD_DIR}/{job_id}_{file.filename}"
+    input_path = f"{UPLOAD_DIR}/{job_id}_{os.path.basename(file.filename)}"
     with open(input_path, "wb") as f:
         f.write(contents)
 
@@ -621,7 +621,9 @@ async def process_batch(
             raise HTTPException(status_code=413, detail=f"{file.filename} too large. Max {MAX_FILE_MB}MB.")
 
         job_id     = str(uuid.uuid4())[:8]
-        input_path = f"{UPLOAD_DIR}/{job_id}_{file.filename}"
+        # Use basename only — file.filename may contain folder path (e.g. gym/gym.jpeg)
+        basename   = os.path.basename(file.filename)
+        input_path = f"{UPLOAD_DIR}/{job_id}_{basename}"
         with open(input_path, "wb") as fh:
             fh.write(contents)
 
