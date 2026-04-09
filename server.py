@@ -546,6 +546,7 @@ async def process_batch(
     batch_size:   int   = Form(4),
     tile_size:    int   = Form(0),
     label_colors: str   = Form("{}"),
+    file_paths:   str   = Form("[]"),   # JSON array of relative paths (e.g. folder/sub/file.mp4)
 ):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
@@ -556,13 +557,18 @@ async def process_batch(
         colors_map = json.loads(label_colors)
     except Exception:
         colors_map = {}
+    try:
+        rel_paths = json.loads(file_paths)
+    except Exception:
+        rel_paths = []
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     batch_id = str(uuid.uuid4())[:8]
     job_ids  = []
 
-    for file in files:
-        fname = file.filename.lower()
+    for i, file in enumerate(files):
+        fname    = file.filename.lower()
+        rel_path = rel_paths[i] if i < len(rel_paths) else file.filename
         if not (any(fname.endswith(e) for e in VIDEO_EXTS) or any(fname.endswith(e) for e in IMAGE_EXTS)):
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
 
@@ -594,6 +600,7 @@ async def process_batch(
                 "detection_counts": {},
                 "output_type":      "image" if is_image else "video",
                 "filename":         file.filename,
+                "relative_path":    rel_path,   # preserves folder structure
                 "labels":           label_list,
                 "batch_id":         batch_id,
             }
@@ -646,7 +653,9 @@ def download_batch(batch_id: str):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for job in done_jobs:
-            base     = os.path.splitext(job["filename"])[0]
+            # Use relative_path to preserve folder structure; fall back to bare filename
+            rel      = job.get("relative_path") or job["filename"]
+            base     = os.path.splitext(rel)[0]
             out_path = job.get("output_path")
             csv_path = job.get("csv_path")
             ext      = ".jpg" if job.get("output_type") == "image" else ".mp4"

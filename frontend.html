@@ -34,6 +34,16 @@
     text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;
   }
 
+  /* Upload mode tabs */
+  .mode-tabs { display: flex; gap: 0; margin-bottom: 10px; border-radius: 5px; overflow: hidden; border: 1px solid #222; width: fit-content; }
+  .mode-tab {
+    padding: 6px 16px; font-family: inherit; font-size: 0.68rem;
+    letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
+    background: #0d0d0d; border: none; color: #555; transition: all 0.15s;
+  }
+  .mode-tab.active { background: #00c864; color: #000; font-weight: bold; }
+  .mode-tab:hover:not(.active) { color: #fff; }
+
   /* Drop zone */
   .dropzone {
     border: 2px dashed #222; border-radius: 8px;
@@ -41,22 +51,32 @@
     cursor: pointer; transition: all 0.2s; position: relative;
   }
   .dropzone:hover, .dropzone.dragover { border-color: #00c864; background: #0a1a0a; }
-  .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
-  .dropzone svg { width: 36px; height: 36px; color: #fff; margin-bottom: 10px; }
   .dropzone p   { font-size: 0.78rem; color: #fff; }
+  .dropzone svg { width: 36px; height: 36px; color: #fff; margin-bottom: 10px; }
 
+  /* Hidden file inputs */
+  #file-input, #folder-input {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+
+  /* File list */
   .file-list {
     margin-top: 10px; display: flex; flex-direction: column; gap: 4px;
-    max-height: 140px; overflow-y: auto;
+    max-height: 160px; overflow-y: auto;
   }
   .file-list-item {
     display: flex; align-items: center; gap: 6px;
-    font-size: 0.72rem; color: #00c864;
+    font-size: 0.70rem; color: #00c864;
     background: #0a1a0a; border-radius: 3px; padding: 3px 8px;
   }
-  .file-list-item .file-size { color: #666; margin-left: auto; flex-shrink: 0; }
-  .file-list-count {
-    font-size: 0.68rem; color: #666; margin-top: 4px; text-align: center;
+  .file-list-item .file-path {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: #aaa;
+  }
+  .file-list-item .file-name { color: #00c864; flex-shrink: 0; }
+  .file-list-item .file-size { color: #555; margin-left: 6px; flex-shrink: 0; }
+  .file-list-summary {
+    font-size: 0.68rem; color: #555; margin-top: 5px; text-align: center;
   }
 
   /* Tags */
@@ -68,14 +88,11 @@
   .tags-wrapper:focus-within { border-color: #00c864; }
   .tag {
     border-radius: 3px; padding: 2px 8px; font-size: 0.72rem;
-    display: flex; align-items: center; gap: 5px;
-    border: 1px solid;
+    display: flex; align-items: center; gap: 5px; border: 1px solid;
   }
   .tag button { background: none; border: none; cursor: pointer; font-size: 0.8rem; opacity: 0.6; }
   .tag button:hover { opacity: 1; }
-  .color-swatch {
-    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block;
-  }
+  .color-swatch { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
   #tag-input {
     background: none; border: none; outline: none; color: #e0e0e0;
     font-family: inherit; font-size: 0.82rem; padding: 2px 4px;
@@ -106,52 +123,46 @@
     border-radius: 4px; padding: 10px; display: none;
   }
 
-  /* ── Batch progress ────────────────────────────────────────────────────── */
+  /* ── Batch progress ────────────────────────────────────────────────── */
   #batch-section { display: none; flex-direction: column; gap: 14px; }
 
-  .batch-overall-header {
-    display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
-  }
   .progress-label  { font-size: 0.72rem; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
   .progress-pct    { font-size: 1rem; font-weight: bold; color: #00c864; }
   .progress-track  { height: 6px; background: #1a1a1a; border-radius: 4px; overflow: hidden; }
   .progress-fill   { height: 100%; background: #00c864; border-radius: 4px; transition: width 0.4s ease; width: 0%; }
 
-  #batch-summary { font-size: 0.68rem; color: #666; margin-top: 6px; }
+  #batch-summary { font-size: 0.68rem; color: #555; margin-top: 6px; }
 
-  /* Per-file rows */
-  .batch-list { display: flex; flex-direction: column; gap: 8px; }
+  .batch-list { display: flex; flex-direction: column; gap: 6px; }
   .batch-item {
     background: #0d0d0d; border: 1px solid #222;
     border-radius: 6px; padding: 10px 14px;
-    display: flex; flex-direction: column; gap: 6px;
+    display: flex; flex-direction: column; gap: 5px;
   }
   .batch-item-header { display: flex; align-items: center; gap: 8px; }
-  .batch-item-name {
-    flex: 1; font-size: 0.75rem; color: #e0e0e0;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .batch-item-pct { font-size: 0.72rem; color: #00c864; min-width: 42px; text-align: right; flex-shrink: 0; }
-  .batch-item-track { height: 3px; background: #1a1a1a; border-radius: 2px; overflow: hidden; }
-  .batch-item-fill  { height: 100%; background: #00c864; border-radius: 2px; transition: width 0.4s; width: 0%; }
+  .batch-item-info   { flex: 1; overflow: hidden; }
+  .batch-item-name   { font-size: 0.75rem; color: #e0e0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .batch-item-relpath{ font-size: 0.62rem; color: #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .batch-item-pct    { font-size: 0.72rem; color: #00c864; min-width: 42px; text-align: right; flex-shrink: 0; }
+  .batch-item-track  { height: 3px; background: #1a1a1a; border-radius: 2px; overflow: hidden; }
+  .batch-item-fill   { height: 100%; background: #00c864; border-radius: 2px; transition: width 0.4s; width: 0%; }
   .batch-item-fill.failed { background: #e05555; }
-  .batch-item-meta  { font-size: 0.65rem; color: #555; display: flex; gap: 12px; flex-wrap: wrap; }
-  .batch-item-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+  .batch-item-meta   { font-size: 0.62rem; color: #555; display: flex; gap: 10px; flex-wrap: wrap; }
+  .batch-item-actions{ display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
   .mini-dl-btn {
     font-size: 0.65rem; padding: 3px 10px; border-radius: 3px;
     cursor: pointer; border: 1px solid; font-family: inherit;
-    background: none; transition: background 0.15s; letter-spacing: 0.5px;
+    background: none; transition: opacity 0.15s; letter-spacing: 0.5px;
   }
-  .mini-dl-btn:hover { opacity: 0.8; }
+  .mini-dl-btn:hover { opacity: 0.75; }
 
-  /* Status dot */
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; flex-shrink: 0; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex-shrink: 0; }
   .status-dot.processing { background: #00c864; animation: pulse 1.2s infinite; }
   .status-dot.done       { background: #00c864; }
   .status-dot.failed     { background: #e05555; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-  /* Download all button */
+  /* Download all */
   #download-all-btn {
     display: none; width: 100%; padding: 13px;
     border-radius: 6px; font-family: inherit; font-size: 0.88rem;
@@ -161,7 +172,6 @@
   }
   #download-all-btn:hover { background: #1e1e3a; }
 
-  /* Reset link */
   #reset-btn {
     text-align: center; font-size: 0.72rem; color: #fff;
     cursor: pointer; display: none;
@@ -180,8 +190,7 @@
   .gpu-metrics { display: flex; gap: 12px; flex-wrap: wrap; }
   .gm {
     background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 4px;
-    padding: 6px 10px; display: flex; flex-direction: column; gap: 2px;
-    min-width: 80px;
+    padding: 6px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 80px;
   }
   .gm-label { font-size: 0.6rem; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
   .gm-value { font-size: 0.88rem; color: #e0e0e0; }
@@ -201,24 +210,36 @@
 <div class="card">
   <div class="section-title">Upload & Configure</div>
 
-  <!-- Drop zone (multiple files) -->
+  <!-- Upload mode tabs + dropzone -->
   <div>
-    <label>Files <span style="color:#555;text-transform:none;letter-spacing:0;font-size:0.65rem">(select multiple)</span></label>
+    <label>Source</label>
+    <div class="mode-tabs">
+      <button class="mode-tab active" id="tab-files"  onclick="switchMode('files')">Files</button>
+      <button class="mode-tab"        id="tab-folder" onclick="switchMode('folder')">Folder</button>
+    </div>
+
     <div class="dropzone" id="dropzone">
+      <!-- Files input (shown in files mode) -->
       <input type="file" id="file-input" multiple
              accept=".mp4,.avi,.mov,.mkv,.webm,.jpg,.jpeg,.png,.bmp,.webp,.tiff"
-             onchange="onFileSelect(this)"/>
+             onchange="onFilesSelect(this)"/>
+      <!-- Folder input (shown in folder mode, swapped in via JS) -->
+      <input type="file" id="folder-input" webkitdirectory
+             accept=".mp4,.avi,.mov,.mkv,.webm,.jpg,.jpeg,.png,.bmp,.webp,.tiff"
+             style="display:none"
+             onchange="onFolderSelect(this)"/>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
         <polyline points="16 12 12 8 8 12"/>
         <line x1="12" y1="8" x2="12" y2="20"/>
       </svg>
-      <p>Drop files here or click to browse</p>
-      <p>Video: MP4 · AVI · MOV · MKV · WEBM — max 500 MB each</p>
-      <p>Image: JPG · PNG · BMP · WEBP · TIFF</p>
+      <p id="dz-primary">Drop files here or click to browse</p>
+      <p id="dz-hint1">Video: MP4 · AVI · MOV · MKV · WEBM — max 500 MB each</p>
+      <p id="dz-hint2">Image: JPG · PNG · BMP · WEBP · TIFF</p>
     </div>
+
     <div class="file-list" id="file-list"></div>
-    <div class="file-list-count" id="file-list-count"></div>
+    <div class="file-list-summary" id="file-list-summary"></div>
   </div>
 
   <!-- Labels -->
@@ -283,7 +304,7 @@
     </div>
     <div id="tile-opts" style="display:none;margin-top:10px">
       <div class="slider-row">
-        <label style="margin:0">Tile Size <span style="color:#fff;font-size:.65rem">(px — smaller = catches tinier objects, slower)</span></label>
+        <label style="margin:0">Tile Size <span style="color:#fff;font-size:.65rem">(px)</span></label>
         <span class="slider-val" id="tile-val">640</span>
       </div>
       <input type="range" id="tile-size" min="320" max="1024" step="64" value="640"
@@ -301,9 +322,8 @@
   <div id="batch-section">
     <div class="section-title">Batch Progress</div>
 
-    <!-- Overall bar -->
     <div>
-      <div class="batch-overall-header">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <span class="progress-label">Overall</span>
         <span class="progress-pct" id="overall-pct">0%</span>
       </div>
@@ -313,12 +333,11 @@
       <div id="batch-summary"></div>
     </div>
 
-    <!-- Per-file list -->
     <div class="batch-list" id="batch-list"></div>
   </div>
 
-  <!-- Download all -->
-  <button id="download-all-btn" onclick="downloadAll()">⬇ DOWNLOAD ALL (ZIP)</button>
+  <!-- Download all as ZIP (folder-preserving) -->
+  <button id="download-all-btn" onclick="downloadAll()">⬇ DOWNLOAD OUTPUT FOLDER (ZIP)</button>
 
   <!-- Reset -->
   <div id="reset-btn" onclick="resetUI()">↺ Process more files</div>
@@ -330,45 +349,146 @@
 </div>
 
 <script>
-  // ── Drag & drop ────────────────────────────────────────────────────────────
+  // ── Upload mode ────────────────────────────────────────────────────────────
+  let uploadMode = 'files';   // 'files' | 'folder'
+
+  function switchMode(mode) {
+    uploadMode = mode;
+    document.getElementById('tab-files').classList.toggle('active',  mode === 'files');
+    document.getElementById('tab-folder').classList.toggle('active', mode === 'folder');
+
+    const fileInput   = document.getElementById('file-input');
+    const folderInput = document.getElementById('folder-input');
+    const primary     = document.getElementById('dz-primary');
+    const hint1       = document.getElementById('dz-hint1');
+
+    if (mode === 'folder') {
+      fileInput.style.display   = 'none';
+      folderInput.style.display = '';
+      // Make folder input cover the dropzone
+      folderInput.style.position = 'absolute';
+      folderInput.style.inset    = '0';
+      folderInput.style.opacity  = '0';
+      folderInput.style.cursor   = 'pointer';
+      folderInput.style.width    = '100%';
+      folderInput.style.height   = '100%';
+      primary.textContent = 'Drop folder here or click to browse';
+      hint1.textContent   = 'All supported files inside the folder will be processed';
+    } else {
+      fileInput.style.display   = '';
+      folderInput.style.display = 'none';
+      primary.textContent = 'Drop files here or click to browse';
+      hint1.textContent   = 'Video: MP4 · AVI · MOV · MKV · WEBM — max 500 MB each';
+    }
+    clearFileList();
+  }
+
+  // ── Drag & drop (supports both files and folders) ─────────────────────────
   const dropzone = document.getElementById('dropzone');
   dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-  dropzone.addEventListener('drop', e => {
+  dropzone.addEventListener('drop', async e => {
     e.preventDefault();
     dropzone.classList.remove('dragover');
-    if (e.dataTransfer.files.length) setFiles(Array.from(e.dataTransfer.files));
+    const items   = Array.from(e.dataTransfer.items || []);
+    const entries = items.map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    if (entries.length && entries.some(en => en.isDirectory)) {
+      const { files, paths } = await readEntriesRecursive(entries);
+      setFiles(files, paths);
+    } else {
+      setFiles(Array.from(e.dataTransfer.files), []);
+    }
   });
 
-  const IMAGE_EXTS = ['.jpg','.jpeg','.png','.bmp','.webp','.tiff','.tif'];
-  let selectedFiles = [];
-
-  function onFileSelect(input) {
-    if (input.files.length) setFiles(Array.from(input.files));
+  // Recursively read all files from dropped folder entries
+  async function readEntriesRecursive(entries) {
+    const files = [], paths = [];
+    async function traverse(entry, prefix) {
+      if (entry.isFile) {
+        await new Promise(resolve => {
+          entry.file(f => { files.push(f); paths.push(prefix + f.name); resolve(); });
+        });
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        // readEntries only returns up to 100 at a time; loop until empty
+        let batch;
+        do {
+          batch = await new Promise(resolve => reader.readEntries(resolve));
+          for (const child of batch) await traverse(child, prefix + entry.name + '/');
+        } while (batch.length > 0);
+      }
+    }
+    for (const entry of entries) await traverse(entry, '');
+    return { files, paths };
   }
 
-  function setFiles(files) {
-    selectedFiles = files;
-    const listEl  = document.getElementById('file-list');
-    const countEl = document.getElementById('file-list-count');
+  const IMAGE_EXTS = ['.jpg','.jpeg','.png','.bmp','.webp','.tiff','.tif'];
+  const VIDEO_EXTS = ['.mp4','.avi','.mov','.mkv','.webm'];
+  const ALLOWED    = [...IMAGE_EXTS, ...VIDEO_EXTS];
+
+  let selectedFiles = [];   // File objects
+  let selectedPaths = [];   // relative paths (mirrors selectedFiles)
+
+  function onFilesSelect(input) {
+    if (input.files.length) setFiles(Array.from(input.files), []);
+  }
+
+  function onFolderSelect(input) {
+    if (!input.files.length) return;
+    const files = [], paths = [];
+    Array.from(input.files).forEach(f => {
+      if (ALLOWED.some(e => f.name.toLowerCase().endsWith(e))) {
+        files.push(f);
+        paths.push(f.webkitRelativePath || f.name);
+      }
+    });
+    setFiles(files, paths);
+  }
+
+  function setFiles(files, paths) {
+    // Filter to supported types
+    const filtered = files.map((f, i) => ({ f, p: paths[i] || f.name }))
+                          .filter(({ f }) => ALLOWED.some(e => f.name.toLowerCase().endsWith(e)));
+    selectedFiles = filtered.map(x => x.f);
+    selectedPaths = filtered.map(x => x.p);
+
+    renderFileList();
+
+    const hasVideo = selectedFiles.some(f => VIDEO_EXTS.some(e => f.name.toLowerCase().endsWith(e)));
+    document.querySelectorAll('.video-only').forEach(el => el.style.display = hasVideo ? '' : 'none');
+  }
+
+  function renderFileList() {
+    const listEl    = document.getElementById('file-list');
+    const summaryEl = document.getElementById('file-list-summary');
     listEl.innerHTML = '';
 
-    const showMax = 8;
-    files.slice(0, showMax).forEach(f => {
+    const showMax = 10;
+    selectedFiles.slice(0, showMax).forEach((f, i) => {
+      const rel  = selectedPaths[i] || f.name;
+      const dir  = rel.includes('/') ? rel.substring(0, rel.lastIndexOf('/') + 1) : '';
+      const name = f.name;
+      const isImg = IMAGE_EXTS.some(e => f.name.toLowerCase().endsWith(e));
       const item = document.createElement('div');
       item.className = 'file-list-item';
-      const isImg = IMAGE_EXTS.some(e => f.name.toLowerCase().endsWith(e));
-      item.innerHTML = `<span>${isImg ? '🖼' : '🎬'}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</span><span class="file-size">${(f.size/1e6).toFixed(1)} MB</span>`;
+      item.innerHTML = `<span>${isImg ? '🖼' : '🎬'}</span>`
+        + (dir ? `<span class="file-path">${dir}</span>` : '')
+        + `<span class="file-name">${name}</span>`
+        + `<span class="file-size">${(f.size/1e6).toFixed(1)} MB</span>`;
       listEl.appendChild(item);
     });
-    if (files.length > showMax)
-      countEl.textContent = `+${files.length - showMax} more file${files.length - showMax > 1 ? 's' : ''}`;
-    else
-      countEl.textContent = `${files.length} file${files.length !== 1 ? 's' : ''} selected`;
 
-    // Show/hide video-only controls based on whether ANY selected file is a video
-    const hasVideo = files.some(f => !IMAGE_EXTS.some(e => f.name.toLowerCase().endsWith(e)));
-    document.querySelectorAll('.video-only').forEach(el => el.style.display = hasVideo ? '' : 'none');
+    const total = selectedFiles.length;
+    if (total === 0) { summaryEl.textContent = ''; return; }
+    const extra = total > showMax ? ` (+${total - showMax} more)` : '';
+    const totalMB = (selectedFiles.reduce((s, f) => s + f.size, 0) / 1e6).toFixed(1);
+    summaryEl.textContent = `${total} file${total !== 1 ? 's' : ''} · ${totalMB} MB total${extra}`;
+  }
+
+  function clearFileList() {
+    selectedFiles = []; selectedPaths = [];
+    document.getElementById('file-list').innerHTML    = '';
+    document.getElementById('file-list-summary').textContent = '';
   }
 
   // ── Color palette ──────────────────────────────────────────────────────────
@@ -409,13 +529,10 @@
 
   function addTag(v) {
     if (!v || tags.includes(v)) return;
-    tags.push(v);
-    getColor(v);
-    renderTags();
+    tags.push(v); getColor(v); renderTags();
   }
   function removeTag(v) {
-    tags = tags.filter(t => t !== v);
-    renderTags();
+    tags = tags.filter(t => t !== v); renderTags();
   }
   function renderTags() {
     const wrapper = document.getElementById('tags-wrapper');
@@ -426,12 +543,10 @@
       el.className = 'tag';
       el.style.cssText = `border-color:${c};color:${c};background:${c}1a`;
       const swatch = document.createElement('span');
-      swatch.className = 'color-swatch';
-      swatch.style.background = c;
+      swatch.className = 'color-swatch'; swatch.style.background = c;
       const text = document.createTextNode(t);
       const btn  = document.createElement('button');
-      btn.textContent = '×';
-      btn.style.color = c;
+      btn.textContent = '×'; btn.style.color = c;
       btn.addEventListener('click', e => { e.stopPropagation(); removeTag(t); });
       el.append(swatch, text, btn);
       wrapper.insertBefore(el, tagInput);
@@ -440,20 +555,20 @@
 
   // ── Submit ─────────────────────────────────────────────────────────────────
   let currentBatchId = null;
-  let currentJobs    = [];   // [{job_id, filename, output_type}]
+  let currentJobs    = [];
   let pollTimer      = null;
 
   async function submitBatch() {
-    if (!selectedFiles.length) { showError('Please select at least one file.'); return; }
+    if (!selectedFiles.length) { showError('Please select files or a folder.'); return; }
     if (!tags.length)           { showError('Add at least one detection label.'); return; }
     hideError();
 
-    const conf      = parseFloat(document.getElementById('confidence').value);
-    const everyN    = parseInt(document.getElementById('every-n').value);
-    const imgsz     = parseInt(document.getElementById('imgsz').value);
-    const batchSize = parseInt(document.getElementById('batch-size').value);
+    const conf        = parseFloat(document.getElementById('confidence').value);
+    const everyN      = parseInt(document.getElementById('every-n').value);
+    const imgsz       = parseInt(document.getElementById('imgsz').value);
+    const batchSize   = parseInt(document.getElementById('batch-size').value);
     const tileEnabled = document.getElementById('tile-enable').checked;
-    const tileSize  = tileEnabled ? parseInt(document.getElementById('tile-size').value) : 0;
+    const tileSize    = tileEnabled ? parseInt(document.getElementById('tile-size').value) : 0;
 
     const fd = new FormData();
     selectedFiles.forEach(f => fd.append('files', f));
@@ -464,6 +579,7 @@
     fd.append('batch_size',   batchSize);
     fd.append('tile_size',    tileSize);
     fd.append('label_colors', JSON.stringify(Object.fromEntries(tags.map(t => [t, getColor(t)]))));
+    fd.append('file_paths',   JSON.stringify(selectedPaths));
 
     document.getElementById('submit-btn').disabled = true;
 
@@ -474,8 +590,9 @@
 
       currentBatchId = data.batch_id;
       currentJobs    = data.job_ids.map((jid, i) => ({
-        job_id:      jid,
-        filename:    selectedFiles[i]?.name || jid,
+        job_id:   jid,
+        filename: selectedFiles[i]?.name || jid,
+        relpath:  selectedPaths[i]       || selectedFiles[i]?.name || jid,
       }));
 
       buildBatchUI();
@@ -491,14 +608,18 @@
   function buildBatchUI() {
     const list = document.getElementById('batch-list');
     list.innerHTML = '';
-    currentJobs.forEach(({ job_id, filename }) => {
-      const div = document.createElement('div');
+    currentJobs.forEach(({ job_id, filename, relpath }) => {
+      const dir  = relpath.includes('/') ? relpath.substring(0, relpath.lastIndexOf('/') + 1) : '';
+      const div  = document.createElement('div');
       div.className = 'batch-item';
-      div.id = `item-${job_id}`;
+      div.id        = `item-${job_id}`;
       div.innerHTML = `
         <div class="batch-item-header">
           <div class="status-dot" id="dot-${job_id}"></div>
-          <div class="batch-item-name" title="${filename}">${filename}</div>
+          <div class="batch-item-info">
+            <div class="batch-item-name" title="${relpath}">${filename}</div>
+            ${dir ? `<div class="batch-item-relpath">${dir}</div>` : ''}
+          </div>
           <div class="batch-item-pct" id="pct-${job_id}">0%</div>
         </div>
         <div class="batch-item-track">
@@ -520,16 +641,14 @@
           const jid = job.job_id;
           totalPct += job.progress || 0;
 
-          // Status dot
           const dot = document.getElementById(`dot-${jid}`);
           if (dot) {
             dot.className = 'status-dot';
-            if (job.status === 'processing') dot.classList.add('processing');
-            else if (job.status === 'done')  dot.classList.add('done');
-            else if (job.status === 'failed') dot.classList.add('failed');
+            if      (job.status === 'processing') dot.classList.add('processing');
+            else if (job.status === 'done')        dot.classList.add('done');
+            else if (job.status === 'failed')      dot.classList.add('failed');
           }
 
-          // Progress bar
           const fill = document.getElementById(`fill-${jid}`);
           const pct  = document.getElementById(`pct-${jid}`);
           if (fill) {
@@ -538,21 +657,19 @@
           }
           if (pct) pct.textContent = (job.progress || 0).toFixed(1) + '%';
 
-          // Meta (resolution, fps, eta)
           const meta = document.getElementById(`meta-${jid}`);
           if (meta) {
             const parts = [];
-            if (job.resolution) parts.push(job.resolution);
-            if (job.proc_fps)   parts.push(job.proc_fps + ' fps');
+            if (job.resolution)      parts.push(job.resolution);
+            if (job.proc_fps)        parts.push(job.proc_fps + ' fps');
             if (job.eta_seconds > 0) parts.push('ETA ' + formatETA(job.eta_seconds));
-            if (job.size_mb)    parts.push(job.size_mb + ' MB');
+            if (job.size_mb)         parts.push(job.size_mb + ' MB');
             if (job.status === 'failed' && job.error) parts.push('⚠ ' + job.error);
             meta.textContent = parts.join(' · ');
           }
 
           if (job.status === 'done') {
             doneCount++;
-            // Show per-file download buttons
             const actions = document.getElementById(`actions-${jid}`);
             if (actions && actions.style.display === 'none') {
               actions.style.display = 'flex';
@@ -574,7 +691,6 @@
           }
         });
 
-        // Overall progress
         const n = d.jobs.length || 1;
         const avgPct = totalPct / n;
         document.getElementById('overall-pct').textContent  = avgPct.toFixed(1) + '%';
@@ -582,12 +698,16 @@
         document.getElementById('batch-summary').textContent =
           `${doneCount} / ${d.jobs.length} complete${failCount ? ` · ${failCount} failed` : ''}`;
 
-        // All finished?
         const allFinished = d.jobs.every(j => j.status === 'done' || j.status === 'failed');
         if (allFinished) {
           clearInterval(pollTimer);
           if (doneCount > 0) {
-            document.getElementById('download-all-btn').style.display = 'block';
+            const btn = document.getElementById('download-all-btn');
+            btn.style.display = 'block';
+            // Label reflects whether it was a folder upload
+            btn.textContent = uploadMode === 'folder'
+              ? '⬇ DOWNLOAD OUTPUT FOLDER (ZIP)'
+              : '⬇ DOWNLOAD ALL (ZIP)';
           }
           document.getElementById('reset-btn').style.display = 'block';
         }
@@ -610,39 +730,32 @@
     if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`;
     return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
   }
-
   function showError(msg) {
     const el = document.getElementById('error-box');
     el.textContent = '⚠ ' + msg; el.style.display = 'block';
   }
   function hideError() { document.getElementById('error-box').style.display = 'none'; }
-
-  function resetSubmitBtn() {
-    document.getElementById('submit-btn').disabled = false;
-  }
+  function resetSubmitBtn() { document.getElementById('submit-btn').disabled = false; }
 
   function resetUI() {
-    selectedFiles = [];
-    tags          = [];
-    currentBatchId = null;
-    currentJobs    = [];
+    clearFileList();
+    tags = []; currentBatchId = null; currentJobs = [];
     Object.keys(labelColors).forEach(k => delete labelColors[k]);
     paletteIdx = 0;
     if (pollTimer) clearInterval(pollTimer);
 
-    document.getElementById('file-list').innerHTML               = '';
-    document.getElementById('file-list-count').textContent       = '';
-    document.getElementById('file-input').value                  = '';
+    document.getElementById('file-input').value                   = '';
+    document.getElementById('folder-input').value                 = '';
     document.getElementById('tags-wrapper').querySelectorAll('.tag').forEach(e => e.remove());
-    document.getElementById('batch-section').style.display       = 'none';
-    document.getElementById('batch-list').innerHTML              = '';
-    document.getElementById('download-all-btn').style.display    = 'none';
-    document.getElementById('reset-btn').style.display           = 'none';
-    document.getElementById('overall-fill').style.width          = '0%';
-    document.getElementById('overall-pct').textContent           = '0%';
-    document.getElementById('batch-summary').textContent         = '';
+    document.getElementById('batch-section').style.display        = 'none';
+    document.getElementById('batch-list').innerHTML               = '';
+    document.getElementById('download-all-btn').style.display     = 'none';
+    document.getElementById('reset-btn').style.display            = 'none';
+    document.getElementById('overall-fill').style.width           = '0%';
+    document.getElementById('overall-pct').textContent            = '0%';
+    document.getElementById('batch-summary').textContent          = '';
     document.querySelectorAll('.video-only').forEach(el => el.style.display = '');
-    document.getElementById('submit-btn').disabled               = false;
+    document.getElementById('submit-btn').disabled                = false;
     hideError();
   }
 
@@ -665,25 +778,17 @@
           <div class="gpu-row">
             <div class="gpu-name">${g.name}</div>
             <div class="gpu-metrics">
-              <div class="gm">
-                <span class="gm-label">GPU Util</span>
+              <div class="gm"><span class="gm-label">GPU Util</span>
                 <span class="gm-value">${g.util_pct}%</span>
-                <div class="bar-wrap"><div class="bar-fill ${utilCls}" style="width:${g.util_pct}%"></div></div>
-              </div>
-              <div class="gm">
-                <span class="gm-label">VRAM</span>
+                <div class="bar-wrap"><div class="bar-fill ${utilCls}" style="width:${g.util_pct}%"></div></div></div>
+              <div class="gm"><span class="gm-label">VRAM</span>
                 <span class="gm-value">${g.mem_used_mb} / ${g.mem_total_mb} MB</span>
-                <div class="bar-wrap"><div class="bar-fill ${memCls}" style="width:${memPct}%"></div></div>
-              </div>
-              <div class="gm">
-                <span class="gm-label">Temp</span>
-                <span class="gm-value ${tempCls}">${g.temp_c}°C</span>
-              </div>
-              <div class="gm">
-                <span class="gm-label">Power</span>
+                <div class="bar-wrap"><div class="bar-fill ${memCls}" style="width:${memPct}%"></div></div></div>
+              <div class="gm"><span class="gm-label">Temp</span>
+                <span class="gm-value ${tempCls}">${g.temp_c}°C</span></div>
+              <div class="gm"><span class="gm-label">Power</span>
                 <span class="gm-value">${g.power_w}W / ${g.power_limit_w}W</span>
-                <div class="bar-wrap"><div class="bar-fill ${powerPct > 90 ? 'crit' : powerPct > 75 ? 'warn' : ''}" style="width:${powerPct}%"></div></div>
-              </div>
+                <div class="bar-wrap"><div class="bar-fill ${powerPct>90?'crit':powerPct>75?'warn':''}" style="width:${powerPct}%"></div></div></div>
             </div>
           </div>`;
       }).join('');
